@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+/*
+  Film Log base theme.
+  Minimal, dark, camera-inspired. Intentionally restrained: this is the
+  application shell only. Numeric/technical values use the mono font so that
+  frame numbers and exposure values read like a camera readout.
+*/
+
+:root {
+  --background: #0b0b0c;
+  --surface: #141416;
+  --surface-raised: #1c1c1f;
+  --border: #2a2a2e;
+  --foreground: #ededed;
+  --muted: #8a8a90;
+  --muted-strong: #b4b4ba;
+  --accent: #e0a04d; /* warm amber, like camera dial markings */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-border: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-strong: var(--muted-strong);
+  --color-accent: var(--accent);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html {
+  scroll-padding-top: env(safe-area-inset-top, 0px);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
