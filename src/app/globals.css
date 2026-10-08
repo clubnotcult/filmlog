@@ -1,0 +1,168 @@
+@import "tailwindcss";
+
+/*
+  Film Log — design system v3.
+
+  The brief: a physical instrument that happens to have a screen. That is a
+  statement about *interaction and hierarchy*, not about surface decoration,
+  so this file deliberately contains no shadows, no gradients, and almost no
+  fills. The whole interface is built from four things:
+
+    1. Ink       — warm off-white type on a warm near-black ground.
+    2. Hairlines — 1px rules that divide and align; boxes are the exception.
+    3. One signal — a single restrained industrial blue, used the way a real
+                    instrument uses an indicator lamp: to say "this is live /
+                    selected / primary" and nothing else. Deliberately not a
+                    bright "tech startup" blue — desaturated and dark enough
+                    to read as precise rather than loud.
+    4. One alarm — a muted red, reserved for destructive or critical states.
+
+  There is no second accent. Green (synced / favorite / success) was dropped:
+  "confirmed" and "selected" are both the signal color, because on a physical
+  device one lamp colour means "on".
+*/
+
+:root {
+  --background: #0f0f0e;
+  --surface: #171716;
+  --surface-raised: #1f1f1d;
+  --border: #2c2b28; /* hairline — dividers and alignment, not containers */
+  --foreground: #ece8df; /* warm off-white, never pure white */
+  --muted: #86817a;
+  --muted-strong: #b7b1a6;
+  --accent: #6f8fb3; /* restrained industrial blue — one signal, precise not bright */
+  --danger: #c4523f; /* destructive / critical only */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-border: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-strong: var(--muted-strong);
+  --color-accent: var(--accent);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  /* Geometry: physical parts have edges, not bubbles. Every "rounded-*"
+     utility now resolves to a near-square corner; only rounded-full (used
+     for genuinely round things) stays round. */
+  --radius-xs: 1px;
+  --radius-sm: 1px;
+  --radius-md: 2px;
+  --radius-lg: 2px;
+  --radius-xl: 3px;
+}
+
+html {
+  color-scheme: dark; /* native selects, date pickers, datalists render dark */
+  scroll-padding-top: env(safe-area-inset-top, 0px);
+  /* iOS otherwise re-scales text on rotation — another source of "the page
+     changed size on me". Pinch-zoom itself is untouched. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/*
+  Involuntary zoom, root cause #1: double-tap-to-zoom.
+  Applied to the previous version's hand-picked list of "tappable" elements
+  (links, buttons, labels, selects) but not to input/textarea themselves, or
+  to anything added later without remembering to extend the list — which is
+  exactly why this kept resurfacing across new screens (Explore, tags,
+  filters) instead of being fixed once. `touch-action: manipulation` allows
+  normal panning AND pinch-zoom, and disables only the double-tap gesture —
+  set on html/body so it's inherited everywhere by default, with nothing
+  left to enumerate or forget.
+*/
+html,
+body {
+  touch-action: manipulation;
+}
+
+/*
+  Involuntary zoom, root cause #2: focus-triggered zoom.
+  iOS Safari (iPhone AND iPad) auto-zooms the page when focus lands on a text
+  input, textarea or select whose computed font-size is under 16px, and often
+  zooms back out on blur. It is a font-size threshold — not the viewport meta,
+  not overflow — and it fires on every such control in the app, not just the
+  tag field. So the rule is global: on any touch-first device, form controls
+  are never below 16px.
+
+  The previous version of this rule reverted to small text at min-width:640px.
+  That was a bug: an iPad is wider than 640px and is still a touch device that
+  still zooms. The correct condition is the input *method*, not the width —
+  only a precise hovering pointer (mouse/trackpad) gets the compact size.
+
+  Deliberately unlayered so it beats Tailwind's `text-sm` utilities, and
+  deliberately NOT paired with maximum-scale / user-scalable=no, which would
+  "fix" this by removing pinch-zoom — an accessibility regression.
+*/
+input,
+textarea,
+select {
+  font-size: 16px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  input,
+  textarea,
+  select {
+    font-size: 0.875rem;
+  }
+}
+
+/* ---- Type system ------------------------------------------------------- */
+
+/* The instrument label: tiny, spaced, quiet. Used only where a value beside
+   it isn't self-explanatory. */
+.label {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Values that are *readings*: tabular, mono, tight. */
+.numeral {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* Form field: a rule, not a box. Focus moves the rule to the signal colour. */
+.field {
+  width: 100%;
+  background: transparent;
+  color: var(--foreground);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0.5rem 0;
+  outline: none;
+}
+.field:focus {
+  border-bottom-color: var(--accent);
+}
+.field::placeholder {
+  color: var(--muted);
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
