@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Plain-Node browser harness (CommonJS scripts, not app code).
+    "scripts/test-harness/e2e/**",
   ]),
 ]);
 

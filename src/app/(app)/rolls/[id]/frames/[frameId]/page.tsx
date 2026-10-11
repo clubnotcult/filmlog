@@ -28,13 +28,17 @@ export default async function FrameDetailPage({
   const rawParams = await searchParams;
   const supabase = await createClient();
 
-  const { data: frame } = await supabase
+  const { data: frame, error: frameError } = await supabase
     .from("frames")
     .select("*")
     .eq("id", frameId)
     .eq("roll_id", rollId)
-    .single();
+    .maybeSingle();
 
+  // A failed query (network blip, expired session, Supabase hiccup) is not a
+  // missing frame. Only a clean "no such row" is a 404; anything else goes to
+  // the error boundary, which offers Try again instead of losing the session.
+  if (frameError) throw new Error(`Couldn't load this frame: ${frameError.message}`);
   if (!frame) notFound();
 
   const navContext = parseFrameNavContext(rollId, rawParams);
@@ -94,8 +98,12 @@ export default async function FrameDetailPage({
       : Promise.resolve({ data: null }),
   ]);
 
-  const prevHref = nav.prevFrameId ? `/rolls/${rollId}/frames/${nav.prevFrameId}${contextQs}` : null;
-  const nextHref = nav.nextFrameId ? `/rolls/${rollId}/frames/${nav.nextFrameId}${contextQs}` : null;
+  // Each neighbor's own roll, not this page's: in Explore the next photograph
+  // can belong to a different roll, and /rolls/<wrong roll>/frames/<id> is a 404.
+  const prevHref =
+    nav.prevFrameId && nav.prevRollId ? `/rolls/${nav.prevRollId}/frames/${nav.prevFrameId}${contextQs}` : null;
+  const nextHref =
+    nav.nextFrameId && nav.nextRollId ? `/rolls/${nav.nextRollId}/frames/${nav.nextFrameId}${contextQs}` : null;
 
   const navCell =
     "numeral flex h-14 items-center text-sm uppercase tracking-[0.14em] transition-colors";

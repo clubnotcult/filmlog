@@ -21,7 +21,6 @@ import {
   isIndexedDbAvailable,
 } from "@/lib/offline/queue";
 import { getOrCreateLocation } from "@/app/(app)/locations/actions";
-import { cameraCounterReading, counterProgress } from "@/lib/camera-counter";
 import type { Camera, Frame, Lens, MeterType, Roll } from "@/lib/database.types";
 
 const EXPECTED_ROLL_LENGTH = 36;
@@ -697,10 +696,9 @@ export function ActiveRollShooter({
     );
   }
 
-  // The big number is the camera's counter (0 on a new roll), not the archive
-  // frame number — stored frames stay 1-based; see lib/camera-counter.
-  const counterReading = cameraCounterReading({ viewedFrameNumber, isNewFrame });
-  const progressFraction = counterProgress(counterReading, EXPECTED_ROLL_LENGTH);
+  // The big number IS the frame number being logged or reviewed (1-based, the
+  // same value that is stored). The bar is only an approximation of position.
+  const progressFraction = Math.min(Math.max(viewedFrameNumber / EXPECTED_ROLL_LENGTH, 0), 1);
   const canGoPrevious = viewedFrameNumber > 1;
   const canGoNext = viewedFrameNumber < maxSaved + 1;
   const primaryLabel = isNewFrame ? (saving ? "Saving…" : "NEXT →") : saving ? "Saving…" : "SAVE";
@@ -722,20 +720,11 @@ export function ActiveRollShooter({
         <div className="flex items-end justify-between gap-3">
           <div className="min-w-0">
             <div className="flex h-3 items-center gap-3">
-              {isNewFrame ? (
-                <>
-                  <span className="label">Counter</span>
-                  <span className="label !text-muted/70">Logging frame {viewedFrameNumber}</span>
-                </>
-              ) : (
-                <>
-                  <span className="label">Frame</span>
-                  <span className="label !text-accent">Review</span>
-                </>
-              )}
+              <span className="label">Frame</span>
+              {!isNewFrame && <span className="label !text-accent">Review</span>}
             </div>
             <div className="numeral mt-1.5 text-6xl font-light leading-none text-foreground">
-              {counterReading}
+              {viewedFrameNumber}
             </div>
           </div>
           <FinishRollMenu

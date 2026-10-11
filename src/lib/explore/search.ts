@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { SELECTIONS } from "@/lib/database.types";
+import { selectionsMatchedBy } from "@/lib/selection";
 import { isFilmType, type FilmType } from "@/lib/film-classification";
 import type { Database, ExposureEvaluation, Frame, MeterType, Selection } from "@/lib/database.types";
 
@@ -207,7 +208,7 @@ export async function searchFrameIds(
   if (filters.exposureEvaluation) {
     framesQuery = framesQuery.eq("exposure_evaluation", filters.exposureEvaluation);
   }
-  if (filters.selections.length > 0) framesQuery = framesQuery.in("selection", filters.selections);
+  if (filters.selections.length > 0) framesQuery = framesQuery.in("selection", selectionsMatchedBy(filters.selections));
   if (taggedFrameIds !== null) framesQuery = framesQuery.in("id", taggedFrameIds);
 
   const { data } = await applyExploreOrder(framesQuery).limit(2000);
@@ -309,7 +310,7 @@ export async function searchFrames(
   if (filters.exposureEvaluation) {
     framesQuery = framesQuery.eq("exposure_evaluation", filters.exposureEvaluation);
   }
-  if (filters.selections.length > 0) framesQuery = framesQuery.in("selection", filters.selections);
+  if (filters.selections.length > 0) framesQuery = framesQuery.in("selection", selectionsMatchedBy(filters.selections));
   if (taggedFrameIds !== null) framesQuery = framesQuery.in("id", taggedFrameIds);
 
   const from = (filters.page - 1) * EXPLORE_PAGE_SIZE;

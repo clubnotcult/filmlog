@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FrameCard } from "@/components/frame-card";
 import { bulkTagFrames } from "@/app/(app)/rolls/[id]/frames/actions";
 import { pushTagsToDrive } from "@/lib/google-drive";
+import { passesSelectionFilter } from "@/lib/selection";
 import type { Frame, Selection } from "@/lib/database.types";
 
 export function FrameGridWithBulkTag({
@@ -29,10 +30,7 @@ export function FrameGridWithBulkTag({
   // A roll is tens of frames, so filtering here is instant and needs no round
   // trip. Opening a frame from a filtered view carries the filter along (see
   // frame-nav), so Previous/Next walks just the marked frames.
-  const visibleFrames =
-    marks.length === 0
-      ? frames
-      : frames.filter((f) => f.selection !== null && marks.includes(f.selection));
+  const visibleFrames = frames.filter((f) => passesSelectionFilter(f.selection, marks));
   const contextQuery = marks.length > 0 ? `?sel=${marks.join(",")}` : "";
 
   function changeMarks(next: Selection[]) {

@@ -63,7 +63,7 @@ export default async function ActiveRollIndexPage() {
               >
                 <p className="font-medium text-foreground">{title}</p>
                 <p className="mt-1 text-xs text-muted">
-                  {cameraName} · Counter {Math.max(roll.current_frame - 1, 0)}
+                  {cameraName} · Frame {roll.current_frame}
                 </p>
               </Link>
             </li>

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { passesSelectionFilter } from "@/lib/selection";
 import { SELECTIONS } from "@/lib/database.types";
 import type { Database, Selection } from "@/lib/database.types";
 import {
@@ -66,6 +67,14 @@ export function contextToQueryString(context: FrameNavContext): string {
 export type FrameNavResult = {
   prevFrameId: string | null;
   nextFrameId: string | null;
+  /**
+   * The roll each neighbor BELONGS to. In a roll these are all the current
+   * roll, but Explore walks frames across many rolls, and a frame's URL is
+   * /rolls/<its own roll>/frames/<id> — building it from the roll currently
+   * on screen sends the first frame of the next roll to Not Found.
+   */
+  prevRollId: string | null;
+  nextRollId: string | null;
   /** Where "back" should go — the roll, or back to Explore with its filters intact. */
   backHref: string;
   backLabel: string;
@@ -107,8 +116,7 @@ export async function resolveFrameNav(
     const inContext = all.filter(
       (f) =>
         f.id === currentFrameId ||
-        context.selections.length === 0 ||
-        (f.selection !== null && context.selections.includes(f.selection)),
+        passesSelectionFilter(f.selection, context.selections),
     );
     const { prev, next } = current
       ? neighborsByPosition(inContext, current, (a, b) => a.frame_number < b.frame_number)
@@ -116,6 +124,8 @@ export async function resolveFrameNav(
     return {
       prevFrameId: prev?.id ?? null,
       nextFrameId: next?.id ?? null,
+      prevRollId: prev ? context.rollId : null,
+      nextRollId: next ? context.rollId : null,
       backHref: `/rolls/${context.rollId}`,
       backLabel: "Roll",
     };
@@ -139,6 +149,8 @@ export async function resolveFrameNav(
   return {
     prevFrameId: prev?.id ?? null,
     nextFrameId: next?.id ?? null,
+    prevRollId: prev?.roll_id ?? null,
+    nextRollId: next?.roll_id ?? null,
     backHref: qs ? `/explore?${qs}` : "/explore",
     backLabel: "Explore",
   };
