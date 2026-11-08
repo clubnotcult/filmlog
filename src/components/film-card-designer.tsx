@@ -5,9 +5,16 @@ import { FilmCard } from "@/components/film-card";
 import {
   MAX_CARD_COLORS,
   MAX_CARD_TEXT,
+  MAX_CARD_TEXTS,
+  cleanCardText,
+  defaultCardText,
   defaultFilmCardDesign,
+  isRotatedSideways,
+  serializeFilmCardDesign,
   type CardDirection,
   type CardLayout,
+  type CardRotation,
+  type CardText,
   type CardTextPosition,
   type CardTextTone,
   type FilmCardDesign,
@@ -15,7 +22,7 @@ import {
 
 const ADD_COLOR_SEQUENCE = ["#d9481c", "#f4efe6", "#2f5d8a", "#e8b923", "#1c1c1c"];
 
-function Segmented<T extends string>({
+function Segmented<T extends string | number>({
   label,
   value,
   options,
@@ -79,11 +86,26 @@ export function FilmCardDesigner({
     update({ colors: [...design.colors, next].slice(0, MAX_CARD_COLORS) });
   };
 
-  const shown = enabled && design.colors.length > 0 ? design : null;
+  // Text is edited raw (so typing a space or a line break isn't swallowed
+  // mid-keystroke); the preview and the saved value use the cleaned form.
+  const updateText = (i: number, patch: Partial<CardText>) =>
+    update({ texts: design.texts.map((t, j) => (j === i ? { ...t, ...patch } : t)) });
+  const removeText = (i: number) => update({ texts: design.texts.filter((_, j) => j !== i) });
+  const addText = () => update({ texts: [...design.texts, defaultCardText("")].slice(0, MAX_CARD_TEXTS) });
+
+  const shown: FilmCardDesign | null =
+    enabled && design.colors.length > 0
+      ? {
+          ...design,
+          texts: design.texts
+            .map((t) => ({ ...t, content: cleanCardText(t.content) }))
+            .filter((t) => t.content),
+        }
+      : null;
 
   return (
     <fieldset className="space-y-4 border-y border-border py-5">
-      <input type="hidden" name="card_design" value={shown ? JSON.stringify(shown) : ""} />
+      <input type="hidden" name="card_design" value={shown ? JSON.stringify(serializeFilmCardDesign(shown)) : ""} />
 
       <div className="flex items-center justify-between gap-3">
         <legend className="label">Film card</legend>
@@ -165,50 +187,93 @@ export function FilmCardDesigner({
             </div>
           )}
 
-          <div>
-            <label htmlFor="card_text" className="label mb-1.5 block">
-              Text
-            </label>
-            <input
-              id="card_text"
-              value={design.text}
-              maxLength={MAX_CARD_TEXT}
-              onChange={(e) => update({ text: e.target.value })}
-              placeholder="PORTRA 400"
-              className="field"
-            />
+          <div className="space-y-4">
+            {design.texts.map((text, i) => {
+              const sideways = isRotatedSideways(text.rotation);
+              return (
+                <div key={i} className="space-y-2 border-t border-border pt-3">
+                  <div className="flex items-center justify-between">
+                    <label htmlFor={`card_text_${i}`} className="label">
+                      Text {design.texts.length > 1 ? i + 1 : ""}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => removeText(i)}
+                      aria-label={`Remove text ${i + 1}`}
+                      className="label h-8 px-1 hover:!text-danger"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <textarea
+                    id={`card_text_${i}`}
+                    value={text.content}
+                    maxLength={MAX_CARD_TEXT}
+                    rows={Math.min(4, Math.max(1, text.content.split("\n").length))}
+                    onChange={(e) => updateText(i, { content: e.target.value })}
+                    placeholder={"PORTRA\n400"}
+                    className="field resize-none font-mono uppercase"
+                  />
+                  <p className="text-[11px] text-muted">Return starts a new line. Size fits automatically.</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <span className="label mb-1.5 block">Rotation</span>
+                      <Segmented<CardRotation>
+                        label={`Text ${i + 1} rotation`}
+                        value={text.rotation}
+                        onChange={(rotation) => updateText(i, { rotation })}
+                        options={[
+                          { value: 0, label: "0°" },
+                          { value: 90, label: "90°" },
+                          { value: 180, label: "180°" },
+                          { value: 270, label: "270°" },
+                        ]}
+                      />
+                    </div>
+                    <div>
+                      <span className="label mb-1.5 block">Position</span>
+                      <Segmented<CardTextPosition>
+                        label={`Text ${i + 1} position`}
+                        value={text.position}
+                        onChange={(position) => updateText(i, { position })}
+                        options={
+                          sideways
+                            ? [
+                                { value: "top", label: "Left" },
+                                { value: "center", label: "Mid" },
+                                { value: "bottom", label: "Right" },
+                              ]
+                            : [
+                                { value: "top", label: "Top" },
+                                { value: "center", label: "Mid" },
+                                { value: "bottom", label: "Base" },
+                              ]
+                        }
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <span className="label mb-1.5 block">Color</span>
+                      <Segmented<CardTextTone>
+                        label={`Text ${i + 1} color`}
+                        value={text.tone}
+                        onChange={(tone) => updateText(i, { tone })}
+                        options={[
+                          { value: "auto", label: "Auto" },
+                          { value: "light", label: "Light" },
+                          { value: "dark", label: "Dark" },
+                        ]}
+                      />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {design.texts.length < MAX_CARD_TEXTS && (
+              <button type="button" onClick={addText} className="label h-9 !text-accent">
+                + Text
+              </button>
+            )}
           </div>
-
-          {design.text.trim() && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <span className="label mb-1.5 block">Text position</span>
-                <Segmented<CardTextPosition>
-                  label="Text position"
-                  value={design.textPosition}
-                  onChange={(textPosition) => update({ textPosition })}
-                  options={[
-                    { value: "top", label: "Top" },
-                    { value: "center", label: "Mid" },
-                    { value: "bottom", label: "Base" },
-                  ]}
-                />
-              </div>
-              <div>
-                <span className="label mb-1.5 block">Text color</span>
-                <Segmented<CardTextTone>
-                  label="Text color"
-                  value={design.textTone}
-                  onChange={(textTone) => update({ textTone })}
-                  options={[
-                    { value: "auto", label: "Auto" },
-                    { value: "light", label: "Light" },
-                    { value: "dark", label: "Dark" },
-                  ]}
-                />
-              </div>
-            </div>
-          )}
         </div>
       ) : (
         <p className="text-xs text-muted">

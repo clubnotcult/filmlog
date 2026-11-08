@@ -112,7 +112,7 @@ export function toAiAnalysisText(rows: ExportRow[]): string {
     const parts = [
       r.driveFilename ?? "no image",
       r.rollTitle,
-      r.rollEndDate ? `${r.rollStartDate}–${r.rollEndDate}` : r.rollStartDate,
+      r.rollEndDate && r.rollEndDate !== r.rollStartDate ? `${r.rollStartDate}–${r.rollEndDate}` : r.rollStartDate,
       `${r.filmStock} (${[r.iso ? `ISO ${r.iso}` : null, r.filmType ?? "unclassified", r.filmFormat].filter(Boolean).join(", ")})`,
       `${r.camera} (${r.exposureControl})`,
       r.lens ? `${r.lens}${r.focalLength ? ` (${r.focalLength})` : ""}` : "unknown",

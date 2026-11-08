@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { formatAperture } from "@/lib/exposure-format";
-import { formatLongDate } from "@/lib/date";
+import { formatLongDate, formatLongDateRange } from "@/lib/date";
 import { FrameImagePreview } from "@/components/frame-image-preview";
 import { SilentImageRefresh } from "@/components/roll-lifecycle/silent-image-refresh";
 import { SelectionControl } from "@/components/frame-organization/selection-control";
@@ -237,8 +237,9 @@ export default async function FrameDetailPage({
                 {rollTitle}
               </Link>
               <p className="mt-0.5 text-xs text-muted">
-                {formatLongDate(roll.start_date)}
-                {roll.end_date ? ` – ${formatLongDate(roll.end_date)}` : roll.status === "active" ? " – in progress" : ""}
+                {roll.end_date
+                  ? formatLongDateRange(roll.start_date, roll.end_date)
+                  : `${formatLongDate(roll.start_date)}${roll.status === "active" ? " – in progress" : ""}`}
               </p>
               <p className="mt-0.5 truncate text-xs text-muted-strong">
                 {[filmStock?.name, camera?.name].filter(Boolean).join(" · ") || "—"}

@@ -51,7 +51,7 @@ test("exposure control decides which settings apply", () => {
   assert.ok(shutterApplies(undefined) && apertureApplies(null), "legacy cameras behave as manual");
 });
 
-// ---- film cards --------------------------------------------------------------
+// ---- film cards (detailed coverage in film-card-text.test.ts) ----------------
 test("card design parsing: 1–3 hex colors, enum fallbacks, null without colors", () => {
   assert.equal(parseFilmCardDesign(null), null);
   assert.equal(parseFilmCardDesign({ colors: [] }), null);
@@ -59,9 +59,7 @@ test("card design parsing: 1–3 hex colors, enum fallbacks, null without colors
   const d = parseFilmCardDesign({ colors: ["#FF0000", "bad", "#00ff00", "#0000ff", "#ffffff"], layout: "weird", text: "  portra 400 " })!;
   assert.deepEqual(d.colors, ["#ff0000", "#00ff00", "#0000ff"]);
   assert.equal(d.layout, "rows");
-  assert.equal(d.text, "portra 400");
-  // round-trips through the hidden form field
-  assert.deepEqual(parseFilmCardDesign(JSON.stringify(d)), d);
+  assert.equal(d.texts[0].content, "portra 400");
 });
 
 test("rows render hard bands; gradient blends; one color is flat", () => {
@@ -76,9 +74,10 @@ test("rows render hard bands; gradient blends; one color is flat", () => {
 
 test("auto text color reads on the band under the text", () => {
   const base = defaultFilmCardDesign("x");
-  assert.equal(cardTextColor({ ...base, colors: ["#ffd400", "#111111"], textPosition: "bottom" }), "#ffffff");
-  assert.equal(cardTextColor({ ...base, colors: ["#ffd400", "#111111"], textPosition: "top" }), "#111111");
-  assert.equal(cardTextColor({ ...base, colors: ["#111111"], textTone: "dark" }), "#111111");
+  const t = (position: "top" | "bottom", tone: "auto" | "dark" = "auto") => ({ content: "X", position, rotation: 0 as const, tone });
+  assert.equal(cardTextColor({ ...base, colors: ["#ffd400", "#111111"] }, t("bottom")), "#ffffff");
+  assert.equal(cardTextColor({ ...base, colors: ["#ffd400", "#111111"] }, t("top")), "#111111");
+  assert.equal(cardTextColor({ ...base, colors: ["#111111"] }, t("top", "dark")), "#111111");
 });
 
 // ---- SmartConvert ordering ---------------------------------------------------
