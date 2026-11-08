@@ -65,11 +65,22 @@ export async function saveFrameAndAdvance(
  * pending-frame handling are client-side UI concerns (FinishRollMenu) — by
  * the time this is called, the user has already made those choices.
  */
-export async function finishRoll(rollId: string): Promise<ActionResult<Roll>> {
+/**
+ * Marks a roll complete with a closing date. The date comes from the person's
+ * device (their local calendar day, "YYYY-MM-DD"), not the database clock —
+ * the server runs in UTC, which would record an evening finish in Austin as
+ * tomorrow. Finishing never requires frames, images or exposure data.
+ */
+export async function finishRoll(rollId: string, endDate?: string | null): Promise<ActionResult<Roll>> {
   const supabase = await createClient();
+
+  if (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+    return { ok: false, error: "Closing date must be a valid date." };
+  }
 
   const { data, error } = await supabase.rpc("finish_roll", {
     p_roll_id: rollId,
+    p_end_date: endDate ?? null,
   });
 
   if (error) return { ok: false, error: friendlyDbError(error) };

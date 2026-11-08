@@ -4,9 +4,10 @@ import { useState, useTransition } from "react";
 import { setFrameLocation } from "@/app/(app)/rolls/[id]/frames/actions";
 
 /**
- * Follows the lens-inheritance model exactly, per spec — settable only on a
- * logged frame (an unlogged frame has no location, same as it has no lens),
- * so this only renders inside the metadata_logged branch of frame review.
+ * The frame's own location — an explicit override of the roll's default.
+ * When the frame has none, the roll's location shows as the placeholder
+ * ("inherited"); typing a value overrides it for this frame only, and
+ * clearing it goes back to inheriting. Works on logged and imported frames.
  * Autocomplete via a plain <datalist> (no new dependency); typing a name
  * that doesn't exist yet creates it on save through get_or_create_location,
  * the same reuse-by-name path the Locations library page uses.
@@ -15,11 +16,14 @@ export function LocationField({
   rollId,
   frameId,
   initialName,
+  inheritedName = null,
   allLocationNames,
 }: {
   rollId: string;
   frameId: string;
   initialName: string | null;
+  /** The roll's location, shown when this frame has no location of its own. */
+  inheritedName?: string | null;
   allLocationNames: string[];
 }) {
   const [value, setValue] = useState(initialName ?? "");
@@ -55,9 +59,9 @@ export function LocationField({
               (e.target as HTMLInputElement).blur();
             }
           }}
-          placeholder="—"
+          placeholder={inheritedName ? `${inheritedName} · from roll` : "—"}
           disabled={pending}
-          className="w-40 border-0 bg-transparent text-right text-sm text-foreground outline-none placeholder:text-muted disabled:opacity-50"
+          className="w-56 border-0 bg-transparent text-right text-sm text-foreground outline-none placeholder:text-muted disabled:opacity-50"
         />
         <datalist id="location-suggestions">
           {allLocationNames.map((name) => (

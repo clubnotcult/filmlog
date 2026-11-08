@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { friendlyDbError } from "@/lib/db-errors";
 import type { ExposureEvaluation, Frame, MeterType, Selection } from "@/lib/database.types";
 import { METER_TYPES } from "@/lib/database.types";
-import { computeSystemTags, combineTagsForDrive } from "@/lib/tags/system-tags";
+import { loadFrameTagSets } from "@/lib/tags/frame-tag-sets";
 
 export type FormState = { error: string | null };
 
@@ -53,24 +53,28 @@ export async function updateFrame(
   const returnTo = returnToRaw && returnToRaw.startsWith("/") ? returnToRaw : null;
   const supabase = await createClient();
 
+  // Lens and location are explicit per-frame overrides in both modes; an
+  // empty value means "inherit from the roll", never a guessed lens.
+  const lensId = optStr(formData, "lens_id");
+  const locationId = optStr(formData, "location_id");
+
   if (!metadataLogged) {
     const { error } = await supabase.rpc("update_frame", {
       p_frame_id: frameId,
       p_metadata_logged: false,
+      p_lens_id: lensId,
+      p_location_id: locationId,
       p_notes: optStr(formData, "notes"),
     });
     if (error) return { error: friendlyDbError(error) };
   } else {
-    const shutterSpeed = str(formData, "shutter_speed");
+    // Which settings are required depends on the roll's camera — the
+    // database enforces it (validate_frame_exposure); missing values are
+    // passed as null rather than invented.
+    const shutterSpeed = optStr(formData, "shutter_speed");
     const apertureRaw = str(formData, "aperture");
-    const lensId = str(formData, "lens_id");
-
-    if (!shutterSpeed) return { error: "Shutter speed is required." };
-    if (!apertureRaw) return { error: "Aperture is required." };
-    if (!lensId) return { error: "Lens is required." };
-
-    const aperture = Number(apertureRaw);
-    if (Number.isNaN(aperture)) return { error: "Aperture must be a number." };
+    const aperture = apertureRaw ? Number(apertureRaw) : null;
+    if (aperture !== null && Number.isNaN(aperture)) return { error: "Aperture must be a number." };
 
     const pushRaw = str(formData, "push_pull");
     const pushPull = pushRaw ? Number(pushRaw) : 0;
@@ -85,6 +89,7 @@ export async function updateFrame(
       p_push_pull: pushPull,
       p_notes: optStr(formData, "notes"),
       p_meter_type: optMeterType(formData, "meter_type"),
+      p_location_id: locationId,
     });
     if (error) return { error: friendlyDbError(error) };
   }
@@ -123,11 +128,11 @@ export async function updateFrameFields(
     p_metadata_logged: input.metadataLogged,
     p_shutter_speed: input.metadataLogged ? input.shutterSpeed : null,
     p_aperture: input.metadataLogged ? input.aperture : null,
-    p_lens_id: input.metadataLogged ? input.lensId : null,
+    p_lens_id: input.lensId,
     p_push_pull: input.metadataLogged ? input.pushPull : null,
     p_notes: input.notes,
     p_meter_type: input.metadataLogged ? input.meterType : null,
-    p_location_id: input.metadataLogged ? input.locationId : null,
+    p_location_id: input.locationId,
   });
 
   if (error) return { ok: false, error: friendlyDbError(error) };
@@ -201,6 +206,21 @@ export async function frameTagNames(frameId: string): Promise<string[]> {
     .filter((n): n is string => Boolean(n));
 }
 
+/**
+ * The Drive description tag set for each given frame (system + roll + frame
+ * tags, with roll inheritance applied) — for pushing to Drive after a sync,
+ * an import, or a change to a roll's global tags or defaults.
+ */
+export async function driveTagUpdatesForFrames(
+  frameIds: string[],
+): Promise<{ driveFileId: string; tags: string[] }[]> {
+  const supabase = await createClient();
+  const sets = await loadFrameTagSets(supabase, frameIds);
+  return sets
+    .filter((t) => t.driveFileId !== null)
+    .map((t) => ({ driveFileId: t.driveFileId as string, tags: t.driveTags }));
+}
+
 export async function addTagToFrame(
   rollId: string,
   frameId: string,
@@ -262,71 +282,13 @@ export async function bulkTagFrames(
   });
   if (error) return { ok: false, error: friendlyDbError(error) };
 
-  // Gather each affected frame's Drive file id + full resulting tag list
-  // (system + user), so the client can push the correct comma-separated set
-  // to each synced file's description — a bulk apply can add the same tag
-  // to frames that already had different other tags (and different gear —
-  // frames in one selection could span multiple lenses), so this can't just
-  // append blindly or assume one system-tag set for the whole batch.
-  const [{ data: framesInfo }, { data: tagRows }] = await Promise.all([
-    supabase.from("frames").select("id, roll_id, lens_id, location_id, drive_file_id").in("id", frameIds),
-    supabase.from("frame_tags").select("frame_id, tags(name)").in("frame_id", frameIds),
-  ]);
-
-  const tagsByFrame = new Map<string, string[]>();
-  for (const row of tagRows ?? []) {
-    const name = (row.tags as unknown as { name: string } | null)?.name;
-    if (!name) continue;
-    const list = tagsByFrame.get(row.frame_id) ?? [];
-    list.push(name);
-    tagsByFrame.set(row.frame_id, list);
-  }
-
-  const rollIds = [...new Set((framesInfo ?? []).map((f) => f.roll_id))];
-  const lensIds = [
-    ...new Set((framesInfo ?? []).map((f) => f.lens_id).filter((v): v is string => Boolean(v))),
-  ];
-  const locationIds = [
-    ...new Set((framesInfo ?? []).map((f) => f.location_id).filter((v): v is string => Boolean(v))),
-  ];
-  const [{ data: rolls }, { data: lenses }, { data: locations }] = await Promise.all([
-    supabase.from("rolls").select("id, film_stock_id, camera_id").in("id", rollIds),
-    supabase.from("lenses").select("id, name").in("id", lensIds),
-    supabase.from("locations").select("id, name").in("id", locationIds),
-  ]);
-  const filmStockIds = [...new Set((rolls ?? []).map((r) => r.film_stock_id))];
-  const cameraIds = [...new Set((rolls ?? []).map((r) => r.camera_id))];
-  const [{ data: filmStocks }, { data: cameras }] = await Promise.all([
-    supabase.from("film_stocks").select("id, name, format, film_type").in("id", filmStockIds),
-    supabase.from("cameras").select("id, name").in("id", cameraIds),
-  ]);
-  const rollById = new Map((rolls ?? []).map((r) => [r.id, r]));
-  const lensById = new Map((lenses ?? []).map((l) => [l.id, l]));
-  const locationById = new Map((locations ?? []).map((l) => [l.id, l]));
-  const filmStockById = new Map((filmStocks ?? []).map((f) => [f.id, f]));
-  const cameraById = new Map((cameras ?? []).map((c) => [c.id, c]));
-
-  const driveUpdates = (framesInfo ?? [])
-    .filter((f) => f.drive_file_id !== null)
-    .map((f) => {
-      const roll = rollById.get(f.roll_id);
-      const filmStock = roll ? filmStockById.get(roll.film_stock_id) : undefined;
-      const camera = roll ? cameraById.get(roll.camera_id) : undefined;
-      const lens = f.lens_id ? lensById.get(f.lens_id) : undefined;
-      const location = f.location_id ? locationById.get(f.location_id) : undefined;
-      const systemTags = computeSystemTags({
-        filmStockName: filmStock?.name ?? null,
-        format: filmStock?.format ?? null,
-        filmType: filmStock?.film_type ?? null,
-        cameraName: camera?.name ?? null,
-        lensName: lens?.name ?? null,
-        locationName: location?.name ?? null,
-      });
-      return {
-        driveFileId: f.drive_file_id as string,
-        tags: combineTagsForDrive(systemTags, tagsByFrame.get(f.id) ?? []),
-      };
-    });
+  // Each affected frame's full resulting tag set (system tags from its
+  // effective gear/location, the roll's global tags, its own tags), so the
+  // client can push the exact description to every synced Drive file.
+  const tagSets = await loadFrameTagSets(supabase, frameIds);
+  const driveUpdates = tagSets
+    .filter((t) => t.driveFileId !== null)
+    .map((t) => ({ driveFileId: t.driveFileId as string, tags: t.driveTags }));
 
   revalidatePath(`/rolls/${rollId}`);
   return { ok: true, data: { taggedCount: data ?? 0, driveUpdates } };

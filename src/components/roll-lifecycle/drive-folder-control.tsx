@@ -31,7 +31,7 @@ const buttonClass =
   "label inline-flex h-10 items-center justify-center border border-border px-4 !text-muted-strong hover:!text-foreground disabled:opacity-40";
 
 /**
- * "Create Drive Folder" for a completed roll that has none yet. The page only
+ * "Create Drive Folder" for an open or completed roll that has none yet. The page only
  * renders this when it applies (completed, not yet linked); once it succeeds the
  * page re-renders in its linked state ("Folder Created · Open in Drive").
  *

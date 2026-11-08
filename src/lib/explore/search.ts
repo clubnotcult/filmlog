@@ -141,6 +141,111 @@ export async function resolveFilmTypeStockIds(
   return (data ?? []).map((s) => s.id);
 }
 
+
+/** Intersects two optional id sets; null means "no constraint". */
+function intersect(a: string[] | null, b: string[] | null): string[] | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  const set = new Set(b);
+  return a.filter((id) => set.has(id));
+}
+
+/**
+ * Frames whose EFFECTIVE value of a roll-inheritable column is one of
+ * `values`: either set on the frame itself, or left empty on the frame and
+ * provided by its roll's default. A frame with its own different value never
+ * matches through its roll — the explicit value wins, exactly as displayed.
+ */
+async function framesWithEffective(
+  supabase: SupabaseClient<Database>,
+  frameColumn: "lens_id" | "location_id",
+  rollColumn: "default_lens_id" | "location_id",
+  values: string[],
+): Promise<string[]> {
+  if (values.length === 0) return [];
+  const [{ data: direct }, { data: rolls }] = await Promise.all([
+    supabase.from("frames").select("id").in(frameColumn, values),
+    supabase.from("rolls").select("id").in(rollColumn, values),
+  ]);
+  const rollIds = (rolls ?? []).map((r) => r.id);
+  const { data: inherited } =
+    rollIds.length > 0
+      ? await supabase.from("frames").select("id").in("roll_id", rollIds).is(frameColumn, null)
+      : { data: [] as { id: string }[] };
+  return [...new Set([...(direct ?? []), ...(inherited ?? [])].map((f) => f.id))];
+}
+
+/**
+ * Resolves every filter that can't be a plain column condition on frames —
+ * roll-level fields, and the inheritable lens / focal length / location /
+ * tag filters — to roll-id and frame-id constraints. "empty" = the filters
+ * can't match anything, so callers return no results without querying.
+ */
+async function resolvePreFilters(
+  supabase: SupabaseClient<Database>,
+  filters: ExploreFilters,
+): Promise<{ rollIds: string[] | null; frameIds: string[] | null } | "empty"> {
+  const typeStockIds = await resolveFilmTypeStockIds(supabase, filters.filmType);
+  if (typeStockIds !== null && typeStockIds.length === 0) return "empty";
+
+  let rollIds: string[] | null = null;
+  if (filters.filmStockId || filters.filmType || filters.cameraId || filters.year || filters.dateFrom || filters.dateTo) {
+    let rollsQuery = supabase.from("rolls").select("id");
+    if (filters.filmStockId) rollsQuery = rollsQuery.eq("film_stock_id", filters.filmStockId);
+    if (typeStockIds !== null) rollsQuery = rollsQuery.in("film_stock_id", typeStockIds);
+    if (filters.cameraId) rollsQuery = rollsQuery.eq("camera_id", filters.cameraId);
+    if (filters.year) {
+      rollsQuery = rollsQuery
+        .gte("start_date", `${filters.year}-01-01`)
+        .lte("start_date", `${filters.year}-12-31`);
+    }
+    if (filters.dateFrom) rollsQuery = rollsQuery.gte("start_date", filters.dateFrom);
+    if (filters.dateTo) rollsQuery = rollsQuery.lte("start_date", filters.dateTo);
+    const { data } = await rollsQuery;
+    rollIds = (data ?? []).map((r) => r.id);
+    if (rollIds.length === 0) return "empty";
+  }
+
+  let frameIds: string[] | null = null;
+
+  if (filters.lensId) {
+    frameIds = intersect(frameIds, await framesWithEffective(supabase, "lens_id", "default_lens_id", [filters.lensId]));
+    if (frameIds!.length === 0) return "empty";
+  }
+
+  if (filters.focalLength) {
+    const { data } = await supabase.from("lenses").select("id").eq("focal_length", filters.focalLength);
+    const lensIds = (data ?? []).map((l) => l.id);
+    if (lensIds.length === 0) return "empty";
+    frameIds = intersect(frameIds, await framesWithEffective(supabase, "lens_id", "default_lens_id", lensIds));
+    if (frameIds!.length === 0) return "empty";
+  }
+
+  if (filters.locationId) {
+    frameIds = intersect(frameIds, await framesWithEffective(supabase, "location_id", "location_id", [filters.locationId]));
+    if (frameIds!.length === 0) return "empty";
+  }
+
+  if (filters.tagId) {
+    // A frame carries a tag if it was tagged directly OR its roll carries it
+    // as a global tag (roll_tags are inherited, never copied).
+    const [{ data: direct }, { data: rollTagRows }] = await Promise.all([
+      supabase.from("frame_tags").select("frame_id").eq("tag_id", filters.tagId),
+      supabase.from("roll_tags").select("roll_id").eq("tag_id", filters.tagId),
+    ]);
+    const taggedRollIds = (rollTagRows ?? []).map((r) => r.roll_id);
+    const { data: inherited } =
+      taggedRollIds.length > 0
+        ? await supabase.from("frames").select("id").in("roll_id", taggedRollIds)
+        : { data: [] as { id: string }[] };
+    const tagged = [...new Set([...(direct ?? []).map((r) => r.frame_id), ...(inherited ?? []).map((f) => f.id)])];
+    frameIds = intersect(frameIds, tagged);
+    if (frameIds!.length === 0) return "empty";
+  }
+
+  return { rollIds, frameIds };
+}
+
 export type ExploreSearchResult = {
   frames: Frame[];
   totalCount: number;
@@ -159,57 +264,23 @@ export async function searchFrameIds(
   supabase: SupabaseClient<Database>,
   filters: ExploreFilters,
 ): Promise<FrameOrderKey[]> {
-  const typeStockIds = await resolveFilmTypeStockIds(supabase, filters.filmType);
-  if (typeStockIds !== null && typeStockIds.length === 0) return [];
-  let rollIds: string[] | null = null;
-  if (filters.filmStockId || filters.filmType || filters.cameraId || filters.year || filters.dateFrom || filters.dateTo) {
-    let rollsQuery = supabase.from("rolls").select("id");
-    if (filters.filmStockId) rollsQuery = rollsQuery.eq("film_stock_id", filters.filmStockId);
-    if (typeStockIds !== null) rollsQuery = rollsQuery.in("film_stock_id", typeStockIds);
-    if (filters.cameraId) rollsQuery = rollsQuery.eq("camera_id", filters.cameraId);
-    if (filters.year) {
-      rollsQuery = rollsQuery
-        .gte("start_date", `${filters.year}-01-01`)
-        .lte("start_date", `${filters.year}-12-31`);
-    }
-    if (filters.dateFrom) rollsQuery = rollsQuery.gte("start_date", filters.dateFrom);
-    if (filters.dateTo) rollsQuery = rollsQuery.lte("start_date", filters.dateTo);
-    const { data } = await rollsQuery;
-    rollIds = (data ?? []).map((r) => r.id);
-    if (rollIds.length === 0) return [];
-  }
-
-  let focalLengthLensIds: string[] | null = null;
-  if (filters.focalLength) {
-    const { data } = await supabase.from("lenses").select("id").eq("focal_length", filters.focalLength);
-    focalLengthLensIds = (data ?? []).map((l) => l.id);
-    if (focalLengthLensIds.length === 0) return [];
-  }
-
-  let taggedFrameIds: string[] | null = null;
-  if (filters.tagId) {
-    const { data } = await supabase.from("frame_tags").select("frame_id").eq("tag_id", filters.tagId);
-    taggedFrameIds = (data ?? []).map((r) => r.frame_id);
-    if (taggedFrameIds.length === 0) return [];
-  }
+  const pre = await resolvePreFilters(supabase, filters);
+  if (pre === "empty") return [];
 
   let framesQuery = supabase
     .from("frames")
     .select("id, created_at, roll_id, frame_number")
     .not("drive_file_id", "is", null);
 
-  if (rollIds !== null) framesQuery = framesQuery.in("roll_id", rollIds);
-  if (filters.lensId) framesQuery = framesQuery.eq("lens_id", filters.lensId);
-  if (focalLengthLensIds !== null) framesQuery = framesQuery.in("lens_id", focalLengthLensIds);
+  if (pre.rollIds !== null) framesQuery = framesQuery.in("roll_id", pre.rollIds);
+  if (pre.frameIds !== null) framesQuery = framesQuery.in("id", pre.frameIds);
   if (filters.apertures.length > 0) framesQuery = framesQuery.in("aperture", filters.apertures);
   if (filters.shutterSpeeds.length > 0) framesQuery = framesQuery.in("shutter_speed", filters.shutterSpeeds);
   if (filters.meterType) framesQuery = framesQuery.eq("meter_type", filters.meterType);
-  if (filters.locationId) framesQuery = framesQuery.eq("location_id", filters.locationId);
   if (filters.exposureEvaluation) {
     framesQuery = framesQuery.eq("exposure_evaluation", filters.exposureEvaluation);
   }
   if (filters.selections.length > 0) framesQuery = framesQuery.in("selection", selectionsMatchedBy(filters.selections));
-  if (taggedFrameIds !== null) framesQuery = framesQuery.in("id", taggedFrameIds);
 
   const { data } = await applyExploreOrder(framesQuery).limit(2000);
   return data ?? [];
@@ -234,60 +305,10 @@ export async function searchFrames(
   supabase: SupabaseClient<Database>,
   filters: ExploreFilters,
 ): Promise<ExploreSearchResult> {
-  // Step 1: resolve roll-level filters (film stock, camera, year, date
-  // range) to a set of matching roll ids, only if at least one is active.
-  const typeStockIds = await resolveFilmTypeStockIds(supabase, filters.filmType);
-  if (typeStockIds !== null && typeStockIds.length === 0) return { frames: [], totalCount: 0 };
-  let rollIds: string[] | null = null;
-  if (filters.filmStockId || filters.filmType || filters.cameraId || filters.year || filters.dateFrom || filters.dateTo) {
-    let rollsQuery = supabase.from("rolls").select("id");
-    if (filters.filmStockId) rollsQuery = rollsQuery.eq("film_stock_id", filters.filmStockId);
-    if (typeStockIds !== null) rollsQuery = rollsQuery.in("film_stock_id", typeStockIds);
-    if (filters.cameraId) rollsQuery = rollsQuery.eq("camera_id", filters.cameraId);
-    if (filters.year) {
-      rollsQuery = rollsQuery
-        .gte("start_date", `${filters.year}-01-01`)
-        .lte("start_date", `${filters.year}-12-31`);
-    }
-    if (filters.dateFrom) rollsQuery = rollsQuery.gte("start_date", filters.dateFrom);
-    if (filters.dateTo) rollsQuery = rollsQuery.lte("start_date", filters.dateTo);
-
-    const { data } = await rollsQuery;
-    rollIds = (data ?? []).map((r) => r.id);
-    if (rollIds.length === 0) {
-      return { frames: [], totalCount: 0 };
-    }
-  }
-
-  // Step 2: resolve the focal-length filter to a set of matching lens ids
-  // (a lens property, not a frame column). The direct lens filter doesn't
-  // need this — it already targets frames.lens_id.
-  let focalLengthLensIds: string[] | null = null;
-  if (filters.focalLength) {
-    const { data } = await supabase
-      .from("lenses")
-      .select("id")
-      .eq("focal_length", filters.focalLength);
-    focalLengthLensIds = (data ?? []).map((l) => l.id);
-    if (focalLengthLensIds.length === 0) {
-      return { frames: [], totalCount: 0 };
-    }
-  }
-
-  // Step 2b: resolve the tag filter to a set of matching frame ids via
-  // frame_tags — a separate small query rather than a nested embed filter,
-  // for the same reason as everything else here.
-  let taggedFrameIds: string[] | null = null;
-  if (filters.tagId) {
-    const { data } = await supabase
-      .from("frame_tags")
-      .select("frame_id")
-      .eq("tag_id", filters.tagId);
-    taggedFrameIds = (data ?? []).map((r) => r.frame_id);
-    if (taggedFrameIds.length === 0) {
-      return { frames: [], totalCount: 0 };
-    }
-  }
+  // Step 1: roll-level filters and the inheritable lens / focal length /
+  // location / tag filters, resolved to id constraints (see resolvePreFilters).
+  const pre = await resolvePreFilters(supabase, filters);
+  if (pre === "empty") return { frames: [], totalCount: 0 };
 
   // Step 3: the frames query itself — every condition here is a direct
   // column on frames, so this is the only query that needs to run against
@@ -298,20 +319,17 @@ export async function searchFrames(
     .select("*", { count: "exact" })
     .not("drive_file_id", "is", null);
 
-  if (rollIds !== null) framesQuery = framesQuery.in("roll_id", rollIds);
-  if (filters.lensId) framesQuery = framesQuery.eq("lens_id", filters.lensId);
-  if (focalLengthLensIds !== null) framesQuery = framesQuery.in("lens_id", focalLengthLensIds);
+  if (pre.rollIds !== null) framesQuery = framesQuery.in("roll_id", pre.rollIds);
+  if (pre.frameIds !== null) framesQuery = framesQuery.in("id", pre.frameIds);
   if (filters.apertures.length > 0) framesQuery = framesQuery.in("aperture", filters.apertures);
   if (filters.shutterSpeeds.length > 0) {
     framesQuery = framesQuery.in("shutter_speed", filters.shutterSpeeds);
   }
   if (filters.meterType) framesQuery = framesQuery.eq("meter_type", filters.meterType);
-  if (filters.locationId) framesQuery = framesQuery.eq("location_id", filters.locationId);
   if (filters.exposureEvaluation) {
     framesQuery = framesQuery.eq("exposure_evaluation", filters.exposureEvaluation);
   }
   if (filters.selections.length > 0) framesQuery = framesQuery.in("selection", selectionsMatchedBy(filters.selections));
-  if (taggedFrameIds !== null) framesQuery = framesQuery.in("id", taggedFrameIds);
 
   const from = (filters.page - 1) * EXPLORE_PAGE_SIZE;
   const to = from + EXPLORE_PAGE_SIZE - 1;

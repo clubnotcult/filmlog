@@ -2,54 +2,85 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  getDriveAccessToken,
-  pickDriveFolder,
-  listFolderJpegs,
-  orderDriveFiles,
-  hasGoogleDriveEnv,
-} from "@/lib/google-drive";
-import { importRollFrames } from "@/app/(app)/rolls/[id]/sync/actions";
-import type { DriveJpegFile } from "@/lib/google-drive/types";
+import { getDriveAccessToken, hasGoogleDriveEnv, pushTagsToDrive } from "@/lib/google-drive";
+import { pickImageSource, readLinkedImageSource, type ImageSource } from "@/lib/google-drive/image-source";
+import { importRollImages, type ImportResult } from "@/app/(app)/rolls/[id]/sync/actions";
 
-type Stage = "idle" | "picking" | "preview" | "importing" | "error";
+type Stage = "idle" | "reading" | "preview" | "importing" | "done" | "error";
+
+/** Best-effort, in the background: write each image's full tag set into its Drive description. */
+export function pushDriveUpdates(updates: { driveFileId: string; tags: string[] }[]) {
+  void (async () => {
+    for (const u of updates) await pushTagsToDrive(u.driveFileId, u.tags);
+  })();
+}
+
+/** What an import of `source` would do to a roll that already holds `existingFileIds`. */
+export function planImport(source: ImageSource, existingFileIds: Set<string>, lastFrameNumber: number) {
+  let next = lastFrameNumber;
+  const added = source.files
+    .filter((f) => !existingFileIds.has(f.id))
+    .map((f) => ({ frameNumber: ++next, file: f }));
+  const sourceIds = new Set(source.files.map((f) => f.id));
+  const missing = [...existingFileIds].filter((id) => !sourceIds.has(id)).length;
+  return { added, kept: source.files.length - added.length, missing };
+}
+
+export function importPayload(source: ImageSource) {
+  return source.files.map((f) => ({
+    drive_file_id: f.id,
+    drive_filename: f.name,
+    drive_thumbnail_url: f.thumbnailLink,
+    drive_view_url: f.webViewLink,
+  }));
+}
 
 /**
- * For a roll shot entirely outside the app: pick the Drive folder with the
- * scans, and one unlogged frame is created per image, in natural filename
- * order — no per-frame exposure to log, since none of it was ever recorded.
- * Only shown for a freshly created roll with no frames yet (see the roll
- * detail page) — import_roll_frames itself also refuses a roll that already
- * has frames, so this can't be run twice by accident.
+ * Imports a Drive JPEG folder into a roll — one frame per image, created
+ * automatically in SmartConvert filename order — or refreshes a roll that
+ * was imported before (new images appended, existing frames untouched).
+ * Always previews first, so nothing changes until Import is pressed.
  */
-export function ImportRollPanel({ rollId }: { rollId: string }) {
+export function ImportRollPanel({
+  rollId,
+  linkedFolderId,
+  existingFileIds,
+  lastFrameNumber,
+}: {
+  rollId: string;
+  /** The roll's image folder, if it has one: refresh reads it directly; a different folder can still be chosen. */
+  linkedFolderId: string | null;
+  existingFileIds: string[];
+  lastFrameNumber: number;
+}) {
   const router = useRouter();
   const [stage, setStage] = useState<Stage>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [folder, setFolder] = useState<{ id: string; name: string } | null>(null);
-  const [files, setFiles] = useState<DriveJpegFile[]>([]);
+  const [source, setSource] = useState<ImageSource | null>(null);
+  const [result, setResult] = useState<ImportResult | null>(null);
 
-  const configured = hasGoogleDriveEnv();
+  if (!hasGoogleDriveEnv()) return null;
 
-  async function pickFolder() {
-    setStage("picking");
+  const existing = new Set(existingFileIds);
+  const isRefresh = existingFileIds.length > 0;
+
+  async function read(pick: boolean) {
+    setStage("reading");
     setError(null);
     try {
+      // Token first: it may open Google's window, which browsers only allow inside the tap.
       const token = await getDriveAccessToken();
-      const picked = await pickDriveFolder(token);
-      if (!picked) {
+      const found = !pick && linkedFolderId ? await readLinkedImageSource(token, linkedFolderId) : await pickImageSource(token);
+      if (!found) {
         setStage("idle");
         return;
       }
-      const rawFiles = await listFolderJpegs(token, picked.id);
-      const ordered = orderDriveFiles(rawFiles);
-      if (ordered.length === 0) {
-        setError("No JPEGs found in that folder.");
+      if (found.files.length === 0) {
+        setError(`No JPEGs found in “${found.folder.name}”.`);
         setStage("error");
         return;
       }
-      setFolder(picked);
-      setFiles(ordered);
+      setSource(found);
       setStage("preview");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong connecting to Google Drive.");
@@ -57,72 +88,79 @@ export function ImportRollPanel({ rollId }: { rollId: string }) {
     }
   }
 
-  async function confirmImport() {
-    if (!folder) return;
+  async function confirm() {
+    if (!source) return;
     setStage("importing");
-    setError(null);
-    const result = await importRollFrames(
-      rollId,
-      folder.id,
-      folder.name,
-      files.map((f) => ({
-        drive_file_id: f.id,
-        drive_filename: f.name,
-        drive_thumbnail_url: f.thumbnailLink,
-        drive_view_url: f.webViewLink,
-      })),
-    );
-    if (!result.ok) {
-      setError(result.error);
+    const res = await importRollImages(rollId, source.folder.id, source.folder.name, importPayload(source));
+    if (!res.ok) {
+      setError(res.error);
       setStage("error");
       return;
     }
-    router.push(`/rolls/${rollId}`);
+    setResult(res.data);
+    setStage("done");
+    pushDriveUpdates(res.data.driveUpdates);
     router.refresh();
   }
 
-  if (!configured) return null;
+  const quiet = "label inline-flex h-10 items-center justify-center border border-border px-4 !text-muted-strong hover:!text-foreground disabled:opacity-50";
+  const primary = "numeral inline-flex h-10 items-center justify-center bg-accent px-4 text-xs font-medium uppercase tracking-[0.14em] text-black";
 
-  if (stage === "idle" || stage === "picking") {
+  if (stage === "idle" || stage === "reading") {
     return (
-      <button
-        type="button"
-        disabled={stage === "picking"}
-        onClick={pickFolder}
-        className="label inline-flex h-10 items-center justify-center border border-border px-4 !text-muted-strong hover:!text-foreground disabled:opacity-50"
-      >
-        {stage === "picking" ? "Opening Drive…" : "Import from Drive Folder"}
-      </button>
+      <div className="flex flex-wrap gap-2">
+        {linkedFolderId && (
+          <button type="button" disabled={stage === "reading"} onClick={() => read(false)} className={quiet}>
+            {stage === "reading" ? "Reading Drive…" : isRefresh ? "Check for new images" : "Import images"}
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={stage === "reading"}
+          onClick={() => read(true)}
+          className={linkedFolderId ? quiet : primary}
+        >
+          {stage === "reading" && !linkedFolderId ? "Opening Drive…" : linkedFolderId ? "Choose folder…" : "Import images from Drive"}
+        </button>
+      </div>
     );
   }
 
-  if (stage === "preview") {
+  if (stage === "preview" && source) {
+    const plan = planImport(source, existing, lastFrameNumber);
     return (
-      <div className="border-y border-border py-4">
+      <div className="w-full border-y border-border py-4">
         <p className="text-sm text-foreground">
-          {files.length} image{files.length === 1 ? "" : "s"} found in &ldquo;{folder?.name}&rdquo;.
+          <span className="numeral">{source.files.length}</span> JPEG{source.files.length === 1 ? "" : "s"} in &ldquo;{source.folder.name}&rdquo;
+          {isRefresh && (
+            <span className="text-muted">
+              {" "}· {plan.kept} already in this roll · {plan.added.length} new
+              {plan.missing > 0 && ` · ${plan.missing} no longer in Drive (kept)`}
+            </span>
+          )}
         </p>
-        <p className="mt-1 text-xs text-muted">
-          Each will become one frame, in filename order, with exposure marked
-          unknown — nothing to log since none of it was recorded.
-        </p>
+        {plan.added.length > 0 ? (
+          <>
+            <p className="mt-1 text-xs text-muted">
+              One frame per image, in filename order. Exposure stays unknown; roll defaults and tags apply automatically.
+            </p>
+            <ol className="mt-3 max-h-56 space-y-1 overflow-y-auto border-y border-border py-2 text-xs">
+              {plan.added.map(({ frameNumber, file }) => (
+                <li key={file.id} className="flex justify-between gap-3 text-muted-strong">
+                  <span className="numeral shrink-0">Frame {String(frameNumber).padStart(2, "0")}</span>
+                  <span className="min-w-0 truncate font-mono text-muted">{file.name}</span>
+                </li>
+              ))}
+            </ol>
+          </>
+        ) : (
+          <p className="mt-1 text-xs text-muted">Nothing new — every image already has its frame.</p>
+        )}
         <div className="mt-3 flex gap-4">
-          <button
-            type="button"
-            onClick={confirmImport}
-            className="numeral inline-flex h-10 items-center justify-center bg-accent px-4 text-xs font-medium uppercase tracking-[0.14em] text-black"
-          >
-            Import {files.length} Frames
+          <button type="button" onClick={confirm} className={primary}>
+            {plan.added.length > 0 ? `Import ${plan.added.length} frame${plan.added.length === 1 ? "" : "s"}` : "Refresh links"}
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              setStage("idle");
-              setFolder(null);
-              setFiles([]);
-            }}
-            className="label hover:!text-foreground"
-          >
+          <button type="button" onClick={() => setStage("idle")} className="label hover:!text-foreground">
             Cancel
           </button>
         </div>
@@ -130,18 +168,24 @@ export function ImportRollPanel({ rollId }: { rollId: string }) {
     );
   }
 
-  if (stage === "importing") {
-    return <p className="text-sm text-muted">Importing…</p>;
+  if (stage === "importing") return <p className="text-sm text-muted">Importing…</p>;
+
+  if (stage === "done" && result) {
+    return (
+      <p className="text-sm text-muted-strong">
+        {result.created > 0 ? `${result.created} frame${result.created === 1 ? "" : "s"} added.` : "No new images."}
+        {result.missing > 0 && ` ${result.missing} image${result.missing === 1 ? " is" : "s are"} no longer in Drive; their frames were kept.`}{" "}
+        <button type="button" onClick={() => setStage("idle")} className="label ml-2 hover:!text-foreground">
+          OK
+        </button>
+      </p>
+    );
   }
 
   return (
     <div>
       <p className="text-sm text-danger">{error}</p>
-      <button
-        type="button"
-        onClick={() => setStage("idle")}
-        className="label mt-2 hover:!text-foreground"
-      >
+      <button type="button" onClick={() => setStage("idle")} className="label mt-2 hover:!text-foreground">
         Try again
       </button>
     </div>

@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { friendlyDbError } from "@/lib/db-errors";
 import type { SyncMapping } from "@/lib/google-drive/types";
 import type { RollSyncHistory } from "@/lib/database.types";
+import { loadFrameTagSets } from "@/lib/tags/frame-tag-sets";
 
 export type ActionResult<T> =
   | { ok: true; data: T }
@@ -162,31 +163,57 @@ export async function applyRollSync(
   return { ok: true, data };
 }
 
+export type ImportResult = {
+  created: number;
+  existing: number;
+  missing: number;
+  /** Drive description updates for every image now on the roll (system + roll + frame tags). */
+  driveUpdates: { driveFileId: string; tags: string[] }[];
+};
+
 /**
- * Bulk-creates unlogged frames for a roll shot entirely outside the app —
- * one frame per Drive file, in the order they're given (already resolved to
- * natural filename order by the caller, the same ordering regular sync
- * uses). Only valid once, on a freshly created roll with zero frames — see
- * the import_roll_frames migration for why. The Google access token never
- * reaches this function; only the already-resolved file metadata does, same
- * as every other Drive-writing action in this app.
+ * Imports a Drive JPEG folder into a roll: one frame per image, in the order
+ * given (SmartConvert natural filename order, resolved by the caller with
+ * orderDriveFiles). Idempotent by Drive file id — re-importing or refreshing
+ * the same folder keeps every existing frame, its number and everything
+ * curated on it, and only appends images that are new. Images that have
+ * vanished from Drive are counted, never deleted. The roll's status and
+ * dates are left alone; finishing is its own step. The Google token never
+ * reaches the server — only resolved file metadata does.
  */
-export async function importRollFrames(
+export async function importRollImages(
   rollId: string,
   driveFolderId: string,
   driveFolderName: string | null,
   files: { drive_file_id: string; drive_filename: string; drive_thumbnail_url: string | null; drive_view_url: string | null }[],
-): Promise<ActionResult<number>> {
+): Promise<ActionResult<ImportResult>> {
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("import_roll_frames", {
+  const { data, error } = await supabase.rpc("import_roll_images", {
     p_roll_id: rollId,
     p_drive_folder_id: driveFolderId,
     p_drive_folder_name: driveFolderName,
     p_files: files,
   });
   if (error) return { ok: false, error: friendlyDbError(error) };
+  if (!data) return { ok: false, error: "Something went wrong importing the images." };
+
+  const { data: frames } = await supabase
+    .from("frames")
+    .select("id")
+    .eq("roll_id", rollId)
+    .not("drive_file_id", "is", null);
+  const sets = await loadFrameTagSets(supabase, (frames ?? []).map((f) => f.id));
 
   revalidatePath(`/rolls/${rollId}`);
   revalidatePath("/rolls");
-  return { ok: true, data: data?.length ?? 0 };
+  revalidatePath("/explore");
+  return {
+    ok: true,
+    data: {
+      ...data,
+      driveUpdates: sets
+        .filter((t) => t.driveFileId !== null)
+        .map((t) => ({ driveFileId: t.driveFileId as string, tags: t.driveTags })),
+    },
+  };
 }

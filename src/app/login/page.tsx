@@ -8,7 +8,7 @@ import { hasSupabaseEnv } from "@/lib/supabase/config";
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirectTo = searchParams.get("redirect") ?? "/active-roll";
+  const redirectTo = searchParams.get("redirect") ?? "/rolls";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

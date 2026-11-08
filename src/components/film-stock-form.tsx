@@ -5,6 +5,8 @@ import { Field, FormError, SubmitButton, inputClass } from "@/components/form-co
 import { FILM_FORMATS, FILM_TYPES } from "@/lib/film-classification";
 import type { FilmStock } from "@/lib/database.types";
 import type { FormState } from "@/app/(app)/inventory/actions";
+import { FilmCardDesigner } from "@/components/film-card-designer";
+import { parseFilmCardDesign } from "@/lib/film-card";
 
 export function FilmStockForm({
   initial,
@@ -94,6 +96,12 @@ export function FilmStockForm({
           ))}
         </select>
       </Field>
+
+      <FilmCardDesigner
+        initial={parseFilmCardDesign(initial?.card_design)}
+        stockName={initial?.name ?? ""}
+        iso={initial?.iso ?? null}
+      />
 
       <FormError error={state.error} />
 

@@ -12,8 +12,10 @@ import {
   type FrameDraft,
 } from "@/lib/active-roll-storage";
 import { saveFrameAndAdvance, finishRoll, reopenRoll } from "@/app/(app)/active-roll/actions";
+import { todayIsoDate } from "@/lib/date";
 import { updateFrameFields, removeLastFrame } from "@/app/(app)/rolls/[id]/frames/actions";
 import { METER_TYPES } from "@/lib/database.types";
+import { apertureApplies, shutterApplies } from "@/lib/camera-exposure";
 import {
   enqueuePendingSave,
   listPendingSaves,
@@ -179,7 +181,7 @@ export function ActiveRollShooter({
   function loadFieldState(frameNumber: number, frameList: Frame[]) {
     const existing = frameList.find((f) => f.frame_number === frameNumber);
     if (existing) {
-      applyFieldState(fieldStateFromExisting(existing, roll.default_lens_id, locationNameById));
+      applyFieldState(fieldStateFromExisting(existing, roll.default_lens_id ?? "", locationNameById));
       return;
     }
     // New frame slot — a cached draft (a refresh mid-composition) takes
@@ -207,7 +209,7 @@ export function ActiveRollShooter({
     applyFieldState(
       baselineFieldState(
         findLastLoggedFrame(frameList),
-        roll.default_lens_id,
+        roll.default_lens_id ?? "",
         camera.default_meter_type,
         locationNameById,
       ),
@@ -236,7 +238,7 @@ export function ActiveRollShooter({
     }
     return baselineFieldState(
       findLastLoggedFrame(initialFrames),
-      initialRoll.default_lens_id,
+      initialRoll.default_lens_id ?? "",
       camera.default_meter_type,
       locationNameById,
     );
@@ -393,8 +395,24 @@ export function ActiveRollShooter({
     }
   }
 
-  const canSaveNew = shutterSpeed !== null && aperture !== null && !saving;
-  const hasPendingSelection = isNewFrame && shutterSpeed !== null && aperture !== null;
+  // Only the settings this camera lets you choose are asked for. A compact
+  // point-and-shoot (automatic) needs neither; its frames log with shutter
+  // and aperture left null — not applicable, never made up.
+  const needShutter = shutterApplies(camera.exposure_control);
+  const needAperture = apertureApplies(camera.exposure_control);
+  const exposureComplete =
+    (!needShutter || shutterSpeed !== null) && (!needAperture || (aperture !== null && Boolean(lensId)));
+  const exposureRequirement =
+    needShutter && needAperture
+      ? "Select a shutter speed and aperture"
+      : needShutter
+        ? "Select a shutter speed"
+        : needAperture
+          ? "Select a lens and aperture"
+          : "";
+  const canSaveNew = exposureComplete && !saving;
+  const hasPendingSelection =
+    isNewFrame && (needShutter || needAperture) && exposureComplete;
 
   const existingLocationName = existingFrame?.location_id
     ? (locationNameById.get(existingFrame.location_id) ?? "")
@@ -404,7 +422,7 @@ export function ActiveRollShooter({
     existingFrame !== null &&
     (shutterSpeed !== existingFrame.shutter_speed ||
       aperture !== existingFrame.aperture ||
-      lensId !== (existingFrame.lens_id ?? roll.default_lens_id) ||
+      lensId !== (existingFrame.lens_id ?? roll.default_lens_id ?? "") ||
       pushPull !== (existingFrame.push_pull ?? 0) ||
       meterType !== existingFrame.meter_type ||
       locationName !== existingLocationName ||
@@ -478,8 +496,8 @@ export function ActiveRollShooter({
   }
 
   async function performSave(): Promise<{ ok: boolean; error?: string }> {
-    if (shutterSpeed === null || aperture === null) {
-      return { ok: false, error: "Select a shutter speed and aperture first." };
+    if (!exposureComplete) {
+      return { ok: false, error: `${exposureRequirement} first.` };
     }
 
     setSaving(true);
@@ -494,9 +512,9 @@ export function ActiveRollShooter({
 
     const input = {
       metadataLogged: true,
-      shutterSpeed,
-      aperture,
-      lensId,
+      shutterSpeed: needShutter ? shutterSpeed : null,
+      aperture: needAperture ? aperture : null,
+      lensId: lensId || null,
       pushPull,
       notes: notes.trim() || null,
       meterType,
@@ -585,8 +603,8 @@ export function ActiveRollShooter({
 
   async function handleSaveExistingEdit() {
     if (!existingFrame) return;
-    if (metadataLogged && (shutterSpeed === null || aperture === null)) {
-      setSaveError("Select a shutter speed and aperture, or turn off Exposure Logged.");
+    if (metadataLogged && !exposureComplete) {
+      setSaveError(`${exposureRequirement}, or turn off Exposure Logged.`);
       return;
     }
     setSaving(true);
@@ -601,9 +619,9 @@ export function ActiveRollShooter({
 
     const result = await updateFrameFields(roll.id, existingFrame.id, {
       metadataLogged,
-      shutterSpeed,
-      aperture,
-      lensId,
+      shutterSpeed: needShutter ? shutterSpeed : null,
+      aperture: needAperture ? aperture : null,
+      lensId: lensId || null,
       pushPull,
       notes: notes.trim() || null,
       meterType,
@@ -648,7 +666,7 @@ export function ActiveRollShooter({
   }
 
   async function handleFinish(): Promise<{ ok: boolean; error?: string }> {
-    const result = await finishRoll(roll.id);
+    const result = await finishRoll(roll.id, todayIsoDate());
     if (!result.ok) return { ok: false, error: result.error };
     clearFrameDraft(roll.id);
     setRoll(result.data);
@@ -787,9 +805,12 @@ export function ActiveRollShooter({
             <span className="text-muted">
               {isNewFrame
                 ? maxSaved === 0
-                  ? camera.name + " · Frame 1 — choose your starting exposure"
-                  : !canSaveNew
-                    ? "Select a shutter speed and aperture to continue"
+                  ? camera.name +
+                    (needShutter || needAperture
+                      ? " · Frame 1 — choose your starting exposure"
+                      : " · automatic exposure")
+                  : !canSaveNew && exposureRequirement
+                    ? `${exposureRequirement} to continue`
                     : camera.name
                 : "Editing a saved frame — changes here never affect other frames"}
             </span>
@@ -805,7 +826,7 @@ export function ActiveRollShooter({
             onClick={() => {
               const baseline = baselineFieldState(
                 findLastLoggedFrame(frames),
-                roll.default_lens_id,
+                roll.default_lens_id ?? "",
                 camera.default_meter_type,
                 locationNameById,
               );
@@ -818,6 +839,13 @@ export function ActiveRollShooter({
         </div>
       ) : (
         <div className="mt-7 space-y-6">
+          {!needShutter && !needAperture && (
+            <p className="border-y border-border py-3 text-xs text-muted">
+              Shutter and aperture: set automatically by the camera — not logged.
+            </p>
+          )}
+
+          {needShutter && (
           <PillGroup
             label="Shutter speed"
             options={camera.shutter_speeds}
@@ -831,7 +859,9 @@ export function ActiveRollShooter({
             }}
             emptyMessage="This camera has no shutter speeds configured — edit it in Gear."
           />
+          )}
 
+          {needAperture && (
           <PillGroup
             label="Aperture"
             options={apertureOptions}
@@ -843,8 +873,13 @@ export function ActiveRollShooter({
               setAperture(v);
               setApertureTouched(true);
             }}
-            emptyMessage="This lens has no aperture stops configured — edit it in Gear."
+            emptyMessage={
+              selectedLens
+                ? "This lens has no aperture stops configured — edit it in Gear."
+                : "Choose a lens to see its aperture stops."
+            }
           />
+          )}
 
           <PillGroup
             label="Lens"

@@ -73,7 +73,11 @@ export default async function GearPage() {
                     )}
                   </div>
                   <p className="mt-1 truncate font-mono text-xs text-muted-strong">
-                    {formatShutterSpeeds(camera.shutter_speeds)}
+                    {camera.exposure_control === "automatic"
+                      ? "Automatic exposure"
+                      : camera.exposure_control === "aperture_priority"
+                        ? "Aperture priority"
+                        : formatShutterSpeeds(camera.shutter_speeds)}
                   </p>
                   {camera.notes && (
                     <p className="mt-1 text-xs text-muted">{camera.notes}</p>

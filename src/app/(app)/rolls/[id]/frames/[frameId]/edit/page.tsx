@@ -44,7 +44,7 @@ export default async function FrameEditPage({
   // The frame's current lens (or the roll's default) must be selectable even
   // if it's since been deactivated, same as the shooting screen.
   let lenses: Lens[] = activeLenses ?? [];
-  const requiredLensId = frame.lens_id ?? roll.default_lens_id;
+  const requiredLensId = frame.lens_id;
   if (requiredLensId && !lenses.some((l) => l.id === requiredLensId)) {
     const { data: fallbackLens } = await supabase
       .from("lenses")
@@ -53,6 +53,10 @@ export default async function FrameEditPage({
       .maybeSingle();
     if (fallbackLens) lenses = [fallbackLens, ...lenses];
   }
+
+  const { data: rollLens } = roll.default_lens_id
+    ? await supabase.from("lenses").select("name").eq("id", roll.default_lens_id).maybeSingle()
+    : { data: null };
 
   const boundUpdate = updateFrame.bind(null, rollId, frameId);
 
@@ -65,7 +69,7 @@ export default async function FrameEditPage({
         ← {returnTo ? "Back to shooting" : `Frame ${frame.frame_number}`}
       </Link>
       <h1 className="mt-2 font-mono text-lg text-foreground">
-        Edit Frame {frame.frame_number}
+        Frame {frame.frame_number} metadata
       </h1>
 
       <div className="mt-6">
@@ -75,6 +79,7 @@ export default async function FrameEditPage({
           lenses={lenses}
           action={boundUpdate}
           returnTo={returnTo}
+          inheritedLensName={rollLens?.name ?? null}
         />
       </div>
     </div>

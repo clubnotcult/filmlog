@@ -9,6 +9,7 @@ export function fakeSupabase(tables: Record<string, Row[]>) {
     in(c: string, vs: unknown[]) { this.rows = this.rows.filter((r) => vs.includes(r[c])); return this; }
     gte(c: string, v: string) { this.rows = this.rows.filter((r) => String(r[c]) >= v); return this; }
     lte(c: string, v: string) { this.rows = this.rows.filter((r) => String(r[c]) <= v); return this; }
+    is(c: string, v: unknown) { this.rows = this.rows.filter((r) => (r[c] ?? null) === v); return this; }
     not(c: string, _op: string, v: unknown) { this.rows = this.rows.filter((r) => r[c] !== v); return this; }
     order(c: string, o: { ascending: boolean }) {
       this.rows.sort((a, b) => (String(a[c]) < String(b[c]) ? -1 : String(a[c]) > String(b[c]) ? 1 : 0) * (o.ascending ? 1 : -1));

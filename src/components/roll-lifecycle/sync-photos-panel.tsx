@@ -13,8 +13,7 @@ import {
 } from "@/lib/google-drive";
 import type { SyncPreview } from "@/lib/google-drive/types";
 import { applyRollSync } from "@/app/(app)/rolls/[id]/sync/actions";
-import { frameTagNames } from "@/app/(app)/rolls/[id]/frames/actions";
-import { computeSystemTags, combineTagsForDrive } from "@/lib/tags/system-tags";
+import { driveTagUpdatesForFrames } from "@/app/(app)/rolls/[id]/frames/actions";
 
 type Stage =
   | "idle"
@@ -27,12 +26,6 @@ type Stage =
 export function SyncPhotosPanel({
   rollId,
   frames,
-  filmStockName,
-  format,
-  filmType = null,
-  cameraName,
-  lensNameById,
-  locationNameById,
   linkedJpegFolderId = null,
 }: {
   rollId: string;
@@ -42,13 +35,7 @@ export function SyncPhotosPanel({
    * remains available. Rolls without one behave exactly as before.
    */
   linkedJpegFolderId?: string | null;
-  frames: { id: string; frame_number: number; lens_id: string | null; location_id: string | null }[];
-  locationNameById: Map<string, string>;
-  filmStockName: string | null;
-  format: string | null;
-  filmType?: string | null;
-  cameraName: string | null;
-  lensNameById: Map<string, string>;
+  frames: { id: string; frame_number: number }[];
 }) {
   const router = useRouter();
   const [stage, setStage] = useState<Stage>("idle");
@@ -130,21 +117,12 @@ export function SyncPhotosPanel({
     // finds it immediately without waiting for someone to open and tag it
     // by hand. Never blocks the sync UI, and a failure here doesn't affect
     // the sync itself — the frame/image association is already saved.
+    // Tag sets are resolved server-side with roll inheritance applied
+    // (effective lens/location, the roll's global tags), the same rules as
+    // every other Drive push.
     void (async () => {
-      for (const pair of preview.pairs) {
-        const frame = frames.find((f) => f.id === pair.frameId);
-        if (!frame) continue;
-        const systemTags = computeSystemTags({
-          filmStockName,
-          format,
-          filmType,
-          cameraName,
-          lensName: frame.lens_id ? (lensNameById.get(frame.lens_id) ?? null) : null,
-          locationName: frame.location_id ? (locationNameById.get(frame.location_id) ?? null) : null,
-        });
-        const userTags = await frameTagNames(pair.frameId);
-        void pushTagsToDrive(pair.file.id, combineTagsForDrive(systemTags, userTags));
-      }
+      const updates = await driveTagUpdatesForFrames(preview.pairs.map((p) => p.frameId));
+      for (const u of updates) await pushTagsToDrive(u.driveFileId, u.tags);
     })();
   }
 

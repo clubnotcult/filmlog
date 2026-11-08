@@ -1,8 +1,11 @@
 /**
  * What the roll detail page shows for Drive archive folders.
  *
- *  - hidden : an active roll (never offered mid-shoot), or nothing to show
- *  - create : a completed roll with no archive folder yet
+ *  - hidden : an archived roll with nothing linked
+ *  - create : an open or completed roll with no archive folder yet — in the
+ *             image-first workflow a roll stays open while its images are
+ *             imported and reviewed, so the RAW / JPEG / SELECTS folders can
+ *             be created as soon as the roll exists
  *  - linked : a roll that already has one (or, if archived, a synced photos
  *             folder) — status and "Open in Drive" instead of the create action
  *
@@ -19,7 +22,6 @@ export function driveSectionState(roll: {
   drive_parent_folder_id: string | null;
   drive_folder_id: string | null;
 }): DriveSectionState {
-  if (roll.status === "active") return { kind: "hidden" };
   if (roll.drive_parent_folder_id) {
     return {
       kind: "linked",
@@ -28,7 +30,9 @@ export function driveSectionState(roll: {
       openFolderId: roll.drive_parent_folder_id,
     };
   }
-  if (roll.status === "completed") return { kind: "create", syncedFolderId: roll.drive_folder_id };
+  if (roll.status === "active" || roll.status === "completed") {
+    return { kind: "create", syncedFolderId: roll.drive_folder_id };
+  }
   if (roll.drive_folder_id) {
     return { kind: "linked", folderCreated: false, driveLinked: true, openFolderId: roll.drive_folder_id };
   }
