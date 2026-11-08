@@ -1,9 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { filmFormatLabel, filmTypeLabel } from "@/lib/film-classification";
 import type { Database } from "@/lib/database.types";
+import { generateRollTitle } from "@/lib/roll-title";
+import { effectiveLensId, effectiveLocationId, effectiveUserTags, groupTagNames } from "@/lib/effective-metadata";
+import { apertureApplies, exposureControlLabel, shutterApplies } from "@/lib/camera-exposure";
 
 export type ExportRow = {
   frameNumber: number;
+  /** The image's Drive filename — its identity in the archive; null if no image is attached. */
+  driveFilename: string | null;
   rollTitle: string;
   rollStartDate: string;
   rollEndDate: string | null;
@@ -14,8 +19,15 @@ export type ExportRow = {
   /** Film format label, e.g. "35mm", "120"; null if unspecified. */
   filmFormat: string | null;
   camera: string;
+  /** Camera exposure control label (Manual, Automatic...). */
+  exposureControl: string;
+  /** Effective lens: the frame's own, else the roll default; null = unknown (never inferred). */
   lens: string | null;
+  /** Where the effective lens came from. */
+  lensSource: "frame" | "roll" | null;
   focalLength: string | null;
+  /** Effective location: the frame's own, else the roll default. */
+  location: string | null;
   shutterSpeed: string | null;
   aperture: number | null;
   meterType: string | null;
@@ -24,6 +36,14 @@ export type ExportRow = {
   exposureEvaluation: string | null;
   /** "none" | "heart" | "star" — spelled out, never numeric, so it can't be averaged or mistaken for a score. */
   selection: "none" | "heart" | "star";
+  /** Shutter speed / aperture: "not_applicable" when the camera sets them itself. */
+  shutterApplicable: boolean;
+  apertureApplicable: boolean;
+  /** The roll's global tags (apply to every frame of the roll). */
+  globalTags: string[];
+  /** Tags assigned to this frame individually. */
+  frameTags: string[];
+  /** Effective user tags: global ∪ frame, de-duplicated. */
   tags: string[];
 };
 
@@ -46,44 +66,56 @@ export async function gatherExportRows(
   if (frameList.length === 0) return [];
 
   const rollIds = [...new Set(frameList.map((f) => f.roll_id))];
-  const lensIds = [...new Set(frameList.map((f) => f.lens_id).filter((v): v is string => Boolean(v)))];
 
-  const [{ data: rolls }, { data: lenses }, { data: frameTagRows }] = await Promise.all([
-    supabase.from("rolls").select("id, custom_title, start_date, end_date, film_stock_id, camera_id"),
-    supabase.from("lenses").select("id, name, focal_length"),
-    supabase.from("frame_tags").select("frame_id, tags(name)").in("frame_id", frameList.map((f) => f.id)),
-  ]);
+  const [{ data: rolls }, { data: lenses }, { data: locations }, { data: frameTagRows }, { data: rollTagRows }] =
+    await Promise.all([
+      supabase
+        .from("rolls")
+        .select("id, custom_title, start_date, end_date, film_stock_id, camera_id, default_lens_id, location_id"),
+      supabase.from("lenses").select("id, name, focal_length"),
+      supabase.from("locations").select("id, name"),
+      supabase.from("frame_tags").select("frame_id, tags(name)").in("frame_id", frameList.map((f) => f.id)),
+      supabase.from("roll_tags").select("roll_id, tags(name)").in("roll_id", rollIds),
+    ]);
 
   const rollById = new Map((rolls ?? []).filter((r) => rollIds.includes(r.id)).map((r) => [r.id, r]));
-  const lensById = new Map((lenses ?? []).filter((l) => lensIds.includes(l.id)).map((l) => [l.id, l]));
+  const lensById = new Map((lenses ?? []).map((l) => [l.id, l]));
+  const locationById = new Map((locations ?? []).map((l) => [l.id, l.name]));
 
   const filmStockIds = [...new Set([...rollById.values()].map((r) => r.film_stock_id))];
   const cameraIds = [...new Set([...rollById.values()].map((r) => r.camera_id))];
   const [{ data: filmStocks }, { data: cameras }] = await Promise.all([
     supabase.from("film_stocks").select("id, name, iso, format, film_type").in("id", filmStockIds),
-    supabase.from("cameras").select("id, name").in("id", cameraIds),
+    supabase.from("cameras").select("id, name, exposure_control").in("id", cameraIds),
   ]);
   const filmStockById = new Map((filmStocks ?? []).map((f) => [f.id, f]));
   const cameraById = new Map((cameras ?? []).map((c) => [c.id, c]));
 
-  const tagsByFrame = new Map<string, string[]>();
-  for (const row of frameTagRows ?? []) {
-    const name = (row.tags as unknown as { name: string } | null)?.name;
-    if (!name) continue;
-    const list = tagsByFrame.get(row.frame_id) ?? [];
-    list.push(name);
-    tagsByFrame.set(row.frame_id, list);
-  }
+  const tagsByFrame = groupTagNames(frameTagRows as never, "frame_id");
+  const tagsByRoll = groupTagNames(rollTagRows as never, "roll_id");
 
   return frameList.map((f) => {
     const roll = rollById.get(f.roll_id);
     const filmStock = roll ? filmStockById.get(roll.film_stock_id) : undefined;
     const camera = roll ? cameraById.get(roll.camera_id) : undefined;
-    const lens = f.lens_id ? lensById.get(f.lens_id) : undefined;
+    const lensRef = roll ? effectiveLensId(f, roll) : { value: f.lens_id, source: f.lens_id ? ("frame" as const) : null };
+    const lens = lensRef.value ? lensById.get(lensRef.value) : undefined;
+    const locationId = roll ? effectiveLocationId(f, roll).value : f.location_id;
+    const globalTags = tagsByRoll.get(f.roll_id) ?? [];
+    const frameTags = tagsByFrame.get(f.id) ?? [];
+    const control = (camera as { exposure_control?: string } | undefined)?.exposure_control ?? "manual";
 
     return {
       frameNumber: f.frame_number,
-      rollTitle: roll?.custom_title ?? roll?.id ?? "Unknown roll",
+      driveFilename: f.drive_filename,
+      rollTitle: roll
+        ? generateRollTitle({
+            startDate: roll.start_date,
+            endDate: roll.end_date,
+            filmStockName: filmStock?.name ?? "Unknown film",
+            customTitle: roll.custom_title,
+          })
+        : "Unknown roll",
       rollStartDate: roll?.start_date ?? "",
       rollEndDate: roll?.end_date ?? null,
       filmStock: filmStock?.name ?? "Unknown",
@@ -91,8 +123,11 @@ export async function gatherExportRows(
       filmType: filmTypeLabel(filmStock?.film_type),
       filmFormat: filmFormatLabel(filmStock?.format),
       camera: camera?.name ?? "Unknown",
+      exposureControl: exposureControlLabel(control),
       lens: lens?.name ?? null,
+      lensSource: lens ? lensRef.source : null,
       focalLength: lens?.focal_length ?? null,
+      location: locationId ? (locationById.get(locationId) ?? null) : null,
       shutterSpeed: f.shutter_speed,
       aperture: f.aperture,
       meterType: f.meter_type,
@@ -100,7 +135,11 @@ export async function gatherExportRows(
       notes: f.notes,
       exposureEvaluation: f.exposure_evaluation,
       selection: f.selection ?? "none",
-      tags: tagsByFrame.get(f.id) ?? [],
+      shutterApplicable: shutterApplies(control),
+      apertureApplicable: apertureApplies(control),
+      globalTags,
+      frameTags,
+      tags: effectiveUserTags(globalTags, frameTags).map((t) => t.name),
     };
   });
 }

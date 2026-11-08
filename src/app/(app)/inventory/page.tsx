@@ -15,6 +15,8 @@ import {
 } from "./actions";
 import { filmFormatLabel, filmTypeLabel } from "@/lib/film-classification";
 import type { FilmInventoryItem, FilmStock } from "@/lib/database.types";
+import { FilmCard } from "@/components/film-card";
+import { parseFilmCardDesign } from "@/lib/film-card";
 
 export default async function InventoryPage({
   searchParams,
@@ -206,6 +208,8 @@ function FilmCatalog({ filmStocks }: { filmStocks: FilmStock[] }) {
                 stock.active ? "" : "opacity-50"
               }`}
             >
+              <div className="flex min-w-0 items-start gap-3">
+              <FilmCard design={parseFilmCardDesign(stock.card_design)} iso={stock.iso} name={stock.name} size="sm" />
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium text-foreground">{stock.name}</span>
@@ -229,6 +233,7 @@ function FilmCatalog({ filmStocks }: { filmStocks: FilmStock[] }) {
                     </span>
                   )}
                 </div>
+              </div>
               </div>
 
               <div className="flex shrink-0 flex-col items-end gap-2">

@@ -10,6 +10,7 @@ export function FrameTagsEditor({
   frameId,
   driveFileId,
   systemTags,
+  rollTags = [],
   initialTags,
   allTagNames,
 }: {
@@ -19,6 +20,8 @@ export function FrameTagsEditor({
   driveFileId: string | null;
   /** Derived from roll/gear metadata (format, film stock, camera, lens) — read-only here, never edited by hand. */
   systemTags: string[];
+  /** The roll's global tags — inherited by every frame, edited on the roll, never copied here. */
+  rollTags?: string[];
   initialTags: { id: string; name: string }[];
   allTagNames: string[];
 }) {
@@ -47,14 +50,14 @@ export function FrameTagsEditor({
       // with a temp id; a page reload will show the real one regardless.
       const nextTags = [...tags, { id: `temp-${result.data}`, name: result.data }];
       setTags(nextTags);
-      void pushTagsToDrive(driveFileId, combineTagsForDrive(systemTags, nextTags.map((t) => t.name)));
+      void pushTagsToDrive(driveFileId, combineTagsForDrive(systemTags, [...rollTags, ...nextTags.map((t) => t.name)]));
     });
   }
 
   function handleRemove(tagId: string) {
     const nextTags = tags.filter((t) => t.id !== tagId);
     setTags(nextTags);
-    void pushTagsToDrive(driveFileId, combineTagsForDrive(systemTags, nextTags.map((t) => t.name)));
+    void pushTagsToDrive(driveFileId, combineTagsForDrive(systemTags, [...rollTags, ...nextTags.map((t) => t.name)]));
     if (tagId.startsWith("temp-")) return; // optimistic add never persisted an id to remove by
     startTransition(async () => {
       await removeTagFromFrame(rollId, frameId, tagId);
@@ -70,6 +73,15 @@ export function FrameTagsEditor({
           <span className="label">System</span>
           <p className="mt-1.5 text-sm leading-snug text-muted">
             {systemTags.join("  ·  ")}
+          </p>
+        </div>
+      )}
+
+      {rollTags.length > 0 && (
+        <div className="mt-4">
+          <span className="label">From roll</span>
+          <p className="mt-1.5 text-sm leading-snug text-muted-strong">
+            {rollTags.join("  ·  ")}
           </p>
         </div>
       )}

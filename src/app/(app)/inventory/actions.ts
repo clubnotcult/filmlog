@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { parseFilmCardDesign, type FilmCardDesign } from "@/lib/film-card";
 import { friendlyDbError } from "@/lib/db-errors";
 import { isFilmFormat, isFilmType, type FilmFormat, type FilmType } from "@/lib/film-classification";
 import type { RowActionState } from "@/components/row-actions";
@@ -37,6 +38,14 @@ function readClassification(
   return { ok: true, format, filmType };
 }
 
+/**
+ * The submitted film card, validated into the stored structure. An empty or
+ * colorless value means "no custom card" (null), never a generated one.
+ */
+function readCardDesign(formData: FormData): FilmCardDesign | null {
+  return parseFilmCardDesign(str(formData, "card_design"));
+}
+
 export async function createFilmStock(
   _prevState: FormState,
   formData: FormData,
@@ -59,6 +68,7 @@ export async function createFilmStock(
     iso,
     format: classification.format,
     film_type: classification.filmType,
+    card_design: readCardDesign(formData),
   });
 
   if (error) return { error: friendlyDbError(error) };
@@ -87,12 +97,19 @@ export async function updateFilmStock(
   const supabase = await createClient();
   const { error } = await supabase
     .from("film_stocks")
-    .update({ name, iso, format: classification.format, film_type: classification.filmType })
+    .update({
+      name,
+      iso,
+      format: classification.format,
+      film_type: classification.filmType,
+      card_design: readCardDesign(formData),
+    })
     .eq("id", id);
 
   if (error) return { error: friendlyDbError(error) };
 
   revalidatePath("/inventory");
+  revalidatePath("/rolls");
   redirect("/inventory");
 }
 

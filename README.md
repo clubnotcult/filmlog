@@ -121,7 +121,7 @@ configuration is required for this phase.
 
 ## Drive archive folders
 
-A completed roll can create its Drive folder (`<archive root>/<year>/<dates>_<FilmStock>_<Locations>/{RAW,JPEG,SELECTS}`, e.g. `9.28_10.2_JHCStreetPan_ATX`) from the roll page.
+A roll can create its Drive folder (`<archive root>/<year>/<dates>_<FilmStock>_<Locations>/{RAW,JPEG,SELECTS}`, e.g. `9.28_10.2_JHCStreetPan_ATX`) from the roll page.
 
 - **Scope change:** this needs the full `https://www.googleapis.com/auth/drive` scope (Google's `files.create` accepts only `drive`, `drive.file` and `drive.appdata`, and `drive.file` cannot write into an existing year folder). In Google Cloud Console, add that scope to the OAuth consent screen, then tap Reconnect Google once.
 - **Migration:** apply `supabase/migrations/20261008090000_drive_folder_structure.sql`.
@@ -133,3 +133,15 @@ Film stocks carry a controlled **film type** (Color Negative, Black & White Nega
 
 - **Migration:** `supabase/migrations/20261009090000_film_classification.sql`. Older stocks are classified from unambiguous names only; the rest stay "Needs classification" in the Film catalog until edited.
 - **Tests:** `npx tsx --test scripts/test-harness/*.test.ts`; `scripts/test-harness/03_film_classification_tests.sql` (apply every migration except the classification one first; the script applies it itself against legacy data).
+
+## Image-first archive
+
+The Library is now the home of the app; the Active Roll shooting log is optional.
+
+- **Workflow:** New roll (camera + film stock + start date; everything else optional) → optionally choose the roll's JPEG folder → a frame is created automatically for every image, in SmartConvert filename order → review, tag, ♥/★ → **Finish roll** (records the closing date; reopenable).
+- **Import is idempotent:** re-importing or "Check for new images" keeps every existing frame (number, tags, selection, notes) by Drive file id, appends only new images, and reports — never deletes — images that disappeared from Drive. A shooting-log roll whose frames still need scans keeps using **Sync Photos** (positional match).
+- **Roll defaults:** default lens (optional — unknown is never inferred), location and global tags apply to every frame that doesn't set its own. Inheritance is resolved at read time (`src/lib/effective-metadata.ts`), so changing a roll default never overwrites a frame's own value. Roll tags live in `roll_tags` and are never copied onto frames.
+- **Cameras:** `exposure_control` (Manual / Aperture priority / Shutter priority / Automatic). Settings the camera chooses itself are not applicable: hidden in the UI, never required, stored as null.
+- **Film cards:** each film stock can carry a small card (1–3 colors, rows or gradient, short text) stored as structured JSON in `film_stocks.card_design`, shown next to its rolls.
+- **Migration:** `supabase/migrations/20261108090000_image_first_archive.sql` (additive; the old `create_roll` signature remains as a wrapper).
+- **Tests:** `npx tsx --test scripts/test-harness/*.test.ts`; `scripts/test-harness/05_image_first_archive_tests.sql` (apply `00_fake_auth.sql` and every migration *before* 20261108090000 first — the script seeds legacy data and applies the new migration itself).

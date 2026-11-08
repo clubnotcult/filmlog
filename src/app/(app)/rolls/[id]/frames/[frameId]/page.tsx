@@ -13,6 +13,11 @@ import { DeleteFrameMenu } from "@/components/frame-organization/delete-frame-me
 import { InsertFrameControls } from "@/components/frame-organization/insert-frame-controls";
 import { LocationField } from "@/components/frame-organization/location-field";
 import { computeSystemTags } from "@/lib/tags/system-tags";
+import { generateRollTitle } from "@/lib/roll-title";
+import { effectiveLensId, effectiveLocationId } from "@/lib/effective-metadata";
+import { apertureApplies, shutterApplies } from "@/lib/camera-exposure";
+import { parseFilmCardDesign } from "@/lib/film-card";
+import { FilmCard } from "@/components/film-card";
 import { parseFrameNavContext, resolveFrameNav, contextToQueryString } from "@/lib/frame-nav";
 import { listTags } from "../actions";
 import { listLocations } from "@/app/(app)/locations/actions";
@@ -44,13 +49,12 @@ export default async function FrameDetailPage({
   const navContext = parseFrameNavContext(rollId, rawParams);
   const contextQs = contextToQueryString(navContext);
 
-  const [{ data: lens }, { data: roll }, { data: rollFrames }, allTags, allLocations, nav] = await Promise.all([
-    frame.lens_id
-      ? supabase.from("lenses").select("name, focal_length").eq("id", frame.lens_id).single()
-      : Promise.resolve({ data: null }),
+  const [{ data: roll }, { data: rollFrames }, allTags, allLocations, nav] = await Promise.all([
     supabase
       .from("rolls")
-      .select("drive_folder_id, film_stock_id, camera_id")
+      .select(
+        "drive_folder_id, film_stock_id, camera_id, default_lens_id, location_id, start_date, end_date, custom_title, status",
+      )
       .eq("id", rollId)
       .single(),
     supabase.from("frames").select("id, drive_file_id").eq("roll_id", rollId),
@@ -59,14 +63,40 @@ export default async function FrameDetailPage({
     resolveFrameNav(supabase, navContext, frameId),
   ]);
 
-  const currentLocation = frame.location_id
-    ? allLocations.find((l) => l.id === frame.location_id) ?? null
+  // Roll inheritance: the frame's own lens/location win; otherwise the
+  // roll's defaults apply. Shown with their source so an inherited value is
+  // never mistaken for one set on this frame.
+  const lensRef = roll ? effectiveLensId(frame, roll) : { value: frame.lens_id, source: frame.lens_id ? "frame" : null };
+  const locationRef = roll
+    ? effectiveLocationId(frame, roll)
+    : { value: frame.location_id, source: frame.location_id ? "frame" : null };
+  const currentLocation = locationRef.value
+    ? allLocations.find((l) => l.id === locationRef.value) ?? null
     : null;
 
-  const [{ data: filmStock }, { data: camera }] = await Promise.all([
-    roll ? supabase.from("film_stocks").select("name, format, film_type").eq("id", roll.film_stock_id).single() : Promise.resolve({ data: null }),
-    roll ? supabase.from("cameras").select("name").eq("id", roll.camera_id).single() : Promise.resolve({ data: null }),
+  const [{ data: filmStock }, { data: camera }, { data: lens }, { data: rollTagRows }] = await Promise.all([
+    roll
+      ? supabase.from("film_stocks").select("name, format, film_type, iso, card_design").eq("id", roll.film_stock_id).single()
+      : Promise.resolve({ data: null }),
+    roll ? supabase.from("cameras").select("name, exposure_control").eq("id", roll.camera_id).single() : Promise.resolve({ data: null }),
+    lensRef.value
+      ? supabase.from("lenses").select("name, focal_length").eq("id", lensRef.value).single()
+      : Promise.resolve({ data: null }),
+    supabase.from("roll_tags").select("tags(name)").eq("roll_id", rollId),
   ]);
+  const rollTagNames = (rollTagRows ?? [])
+    .map((r) => (r.tags as unknown as { name: string } | null)?.name)
+    .filter((n): n is string => Boolean(n));
+  const showShutter = shutterApplies(camera?.exposure_control);
+  const showAperture = apertureApplies(camera?.exposure_control);
+  const rollTitle = roll
+    ? generateRollTitle({
+        startDate: roll.start_date,
+        endDate: roll.end_date,
+        filmStockName: filmStock?.name ?? "Unknown film",
+        customTitle: roll.custom_title,
+      })
+    : null;
 
   const systemTags = computeSystemTags({
     filmStockName: filmStock?.name ?? null,
@@ -134,7 +164,7 @@ export default async function FrameDetailPage({
           href={`/rolls/${rollId}/frames/${frameId}/edit`}
           className="label hover:!text-foreground"
         >
-          Edit exposure
+          Edit metadata
         </Link>
       </div>
 
@@ -191,15 +221,39 @@ export default async function FrameDetailPage({
         >
           {frame.drive_filename ?? `Frame ${frame.frame_number}`}
         </h1>
-        <p className="mt-1.5 truncate text-sm text-muted-strong">
-          {[filmStock?.name, camera?.name].filter(Boolean).join(" · ") || "—"}
-        </p>
-        <p className="numeral mt-1 truncate text-xs text-muted">
-          {frame.metadata_logged
-            ? [lens?.name, frame.shutter_speed, frame.aperture !== null ? formatAperture(frame.aperture) : null]
-                .filter(Boolean)
-                .join(" · ")
-            : "No exposure input logged"}
+        {roll && rollTitle && (
+          <div className="mt-3 flex items-start gap-3">
+            <FilmCard
+              design={parseFilmCardDesign(filmStock?.card_design)}
+              iso={filmStock?.iso ?? null}
+              name={filmStock?.name ?? ""}
+              size="sm"
+            />
+            <div className="min-w-0">
+              <Link
+                href={`/rolls/${rollId}`}
+                className="block text-sm leading-snug text-foreground underline-offset-4 hover:underline"
+              >
+                {rollTitle}
+              </Link>
+              <p className="mt-0.5 text-xs text-muted">
+                {formatLongDate(roll.start_date)}
+                {roll.end_date ? ` – ${formatLongDate(roll.end_date)}` : roll.status === "active" ? " – in progress" : ""}
+              </p>
+              <p className="mt-0.5 truncate text-xs text-muted-strong">
+                {[filmStock?.name, camera?.name].filter(Boolean).join(" · ") || "—"}
+              </p>
+            </div>
+          </div>
+        )}
+        <p className="numeral mt-3 truncate text-xs text-muted">
+          {[
+            lens?.name,
+            showShutter ? frame.shutter_speed : null,
+            showAperture && frame.aperture !== null ? formatAperture(frame.aperture) : null,
+          ]
+            .filter(Boolean)
+            .join(" · ") || (frame.metadata_logged ? "" : "No exposure input logged")}
         </p>
       </div>
 
@@ -218,6 +272,7 @@ export default async function FrameDetailPage({
           frameId={frameId}
           driveFileId={frame.drive_file_id}
           systemTags={systemTags}
+          rollTags={rollTagNames}
           initialTags={initialTags}
           allTagNames={allTags.map((t) => t.name)}
         />
@@ -239,52 +294,58 @@ export default async function FrameDetailPage({
           everything else is a quiet ruled list. */}
       <div className="border-b border-border py-5">
         <span className="label">Metadata</span>
-        {frame.metadata_logged ? (
-          <>
-            <div className="mt-3 grid grid-cols-2 gap-x-6">
-              <div>
-                <span className="label">Shutter</span>
-                <div className="numeral mt-1.5 text-3xl font-light leading-none">
-                  {frame.shutter_speed ?? "—"}
-                </div>
-              </div>
-              <div>
-                <span className="label">Aperture</span>
-                <div className="numeral mt-1.5 text-3xl font-light leading-none">
-                  {frame.aperture !== null ? formatAperture(frame.aperture) : "—"}
-                </div>
+        {(showShutter || showAperture) && (
+          <div className="mt-3 grid grid-cols-2 gap-x-6">
+            <div>
+              <span className="label">Shutter</span>
+              <div className="numeral mt-1.5 text-3xl font-light leading-none">
+                {showShutter ? (frame.shutter_speed ?? "—") : "N/A"}
               </div>
             </div>
-            <dl className="mt-5 divide-y divide-border border-y border-border text-sm">
-              <div className="flex items-baseline justify-between py-2.5">
-                <dt className="label">Film</dt>
-                <dd className="text-foreground">{filmStock?.name ?? "—"}</dd>
+            <div>
+              <span className="label">Aperture</span>
+              <div className="numeral mt-1.5 text-3xl font-light leading-none">
+                {!showAperture ? "N/A" : frame.aperture !== null ? formatAperture(frame.aperture) : "—"}
               </div>
-              <div className="flex items-baseline justify-between py-2.5">
-                <dt className="label">Camera</dt>
-                <dd className="text-foreground">{camera?.name ?? "—"}</dd>
-              </div>
-              <div className="flex items-baseline justify-between py-2.5">
-                <dt className="label">Lens</dt>
-                <dd className="text-foreground">{lens?.name ?? "—"}</dd>
-              </div>
-              <div className="flex items-baseline justify-between py-2.5">
-                <dt className="label">Meter</dt>
-                <dd className="text-foreground">{frame.meter_type ?? "—"}</dd>
-              </div>
-              <LocationField
-                rollId={rollId}
-                frameId={frameId}
-                initialName={currentLocation?.name ?? null}
-                allLocationNames={allLocations.map((l) => l.name)}
-              />
-            </dl>
-          </>
-        ) : (
-          <p className="mt-2 text-sm text-muted">
-            No exposure input was logged for this frame.
-          </p>
+            </div>
+          </div>
         )}
+        {!frame.metadata_logged && (showShutter || showAperture) && (
+          <p className="mt-2 text-xs text-muted">No exposure input was logged for this frame.</p>
+        )}
+        {!showShutter && !showAperture && (
+          <p className="mt-2 text-xs text-muted">Automatic camera — shutter and aperture are not applicable.</p>
+        )}
+        <dl className="mt-5 divide-y divide-border border-y border-border text-sm">
+          <div className="flex items-baseline justify-between py-2.5">
+            <dt className="label">Film</dt>
+            <dd className="text-foreground">{filmStock?.name ?? "—"}</dd>
+          </div>
+          <div className="flex items-baseline justify-between py-2.5">
+            <dt className="label">Camera</dt>
+            <dd className="text-foreground">{camera?.name ?? "—"}</dd>
+          </div>
+          <div className="flex items-baseline justify-between gap-3 py-2.5">
+            <dt className="label">Lens</dt>
+            <dd className="text-right text-foreground">
+              {lens?.name ?? <span className="text-muted">Unknown</span>}
+              {lensRef.source === "roll" && <span className="ml-2 text-xs text-muted">from roll</span>}
+            </dd>
+          </div>
+          {frame.metadata_logged && (
+            <div className="flex items-baseline justify-between py-2.5">
+              <dt className="label">Meter</dt>
+              <dd className="text-foreground">{frame.meter_type ?? "—"}</dd>
+            </div>
+          )}
+          <LocationField
+            rollId={rollId}
+            frameId={frameId}
+            initialName={locationRef.source === "frame" ? (currentLocation?.name ?? null) : null}
+            inheritedName={locationRef.source === "roll" ? (currentLocation?.name ?? null) : null}
+            allLocationNames={allLocations.map((l) => l.name)}
+          />
+        </dl>
         <p className="mt-3 text-xs text-muted">
           Logged {formatLongDate(frame.created_at.slice(0, 10))}
         </p>

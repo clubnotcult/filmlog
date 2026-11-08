@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { isExposureControl, shutterApplies, type ExposureControl } from "@/lib/camera-exposure";
 import { friendlyDbError } from "@/lib/db-errors";
 import { parseApertureStops, parseShutterSpeeds } from "@/lib/gear-values";
 import { METER_TYPES, type MeterType } from "@/lib/database.types";
@@ -28,6 +29,12 @@ function optMeterType(formData: FormData, key: string): MeterType | null {
 // Cameras
 // ---------------------------------------------------------------------------
 
+/** Exposure control from the form; defaults to manual (today's behaviour). */
+function exposureControlFrom(formData: FormData): ExposureControl {
+  const value = str(formData, "exposure_control");
+  return isExposureControl(value) ? value : "manual";
+}
+
 export async function createCamera(
   _prevState: FormState,
   formData: FormData,
@@ -35,8 +42,12 @@ export async function createCamera(
   const name = str(formData, "name");
   const shutterSpeeds = parseShutterSpeeds(str(formData, "shutter_speeds"));
 
+  const exposureControl = exposureControlFrom(formData);
+
   if (!name) return { error: "Name is required." };
-  if (shutterSpeeds.length === 0) {
+  // A camera that picks its own shutter speed (automatic, aperture priority)
+  // has no dial to describe, so none is required.
+  if (shutterApplies(exposureControl) && shutterSpeeds.length === 0) {
     return { error: "Add at least one shutter speed." };
   }
 
@@ -47,6 +58,7 @@ export async function createCamera(
     notes: optStr(formData, "notes"),
     shutter_speeds: shutterSpeeds,
     default_meter_type: optMeterType(formData, "default_meter_type"),
+    exposure_control: exposureControl,
   });
 
   if (error) return { error: friendlyDbError(error) };
@@ -63,8 +75,12 @@ export async function updateCamera(
   const name = str(formData, "name");
   const shutterSpeeds = parseShutterSpeeds(str(formData, "shutter_speeds"));
 
+  const exposureControl = exposureControlFrom(formData);
+
   if (!name) return { error: "Name is required." };
-  if (shutterSpeeds.length === 0) {
+  // A camera that picks its own shutter speed (automatic, aperture priority)
+  // has no dial to describe, so none is required.
+  if (shutterApplies(exposureControl) && shutterSpeeds.length === 0) {
     return { error: "Add at least one shutter speed." };
   }
 
@@ -77,6 +93,7 @@ export async function updateCamera(
       notes: optStr(formData, "notes"),
       shutter_speeds: shutterSpeeds,
       default_meter_type: optMeterType(formData, "default_meter_type"),
+      exposure_control: exposureControl,
     })
     .eq("id", id);
 

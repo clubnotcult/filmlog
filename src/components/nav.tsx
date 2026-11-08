@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+// The archive leads; the shooting log is still one tap away but secondary.
 const NAV_ITEMS = [
-  { href: "/active-roll", label: "Active Roll" },
   { href: "/rolls", label: "Library", matchPaths: ["/rolls", "/explore"] },
+  { href: "/active-roll", label: "Active Roll" },
   { href: "/inventory", label: "Inventory" },
   { href: "/gear", label: "Gear" },
   { href: "/export", label: "Export" },

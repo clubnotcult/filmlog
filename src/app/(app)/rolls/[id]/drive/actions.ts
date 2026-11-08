@@ -78,7 +78,7 @@ export async function linkRollDriveFolders(
       drive_selects_folder_id: input.selectsId,
     })
     .eq("id", rollId)
-    .eq("status", "completed")
+    .in("status", ["active", "completed"])
     .is("drive_parent_folder_id", null)
     .select("id");
   if (error) return { ok: false, error: friendlyDbError(error) };
@@ -91,7 +91,7 @@ export async function linkRollDriveFolders(
       .maybeSingle();
     if (!roll) return { ok: false, error: "That roll wasn't found." };
     if (roll.drive_parent_folder_id) return { ok: true, data: { alreadyLinked: true } };
-    return { ok: false, error: "Drive folders can only be created for a completed roll." };
+    return { ok: false, error: "Drive folders can't be created for an archived roll." };
   }
 
   revalidatePath(`/rolls/${rollId}`);

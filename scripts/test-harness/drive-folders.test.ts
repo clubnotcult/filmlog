@@ -315,11 +315,12 @@ test("scope: a single full-drive scope (folder creation needs it), no leftover n
 
 // ---- Roll detail visibility ------------------------------------------------
 import { driveSectionState } from "../../src/lib/drive-section";
-test("visibility: never on active; create only when completed and unlinked; linked replaces create", () => {
+test("visibility: create on open or completed rolls without a folder; linked replaces create", () => {
   const r = (status: string, parent: string | null, synced: string | null) =>
     driveSectionState({ status, drive_parent_folder_id: parent, drive_folder_id: synced });
-  assert.equal(r("active", null, null).kind, "hidden");
-  assert.equal(r("active", "P", "S").kind, "hidden"); // reopened roll keeps its links but hides the section
+  // Image-first: an open roll is where images get imported, so folders can be made right away.
+  assert.equal(r("active", null, null).kind, "create");
+  assert.equal(r("active", "P", "S").kind, "linked"); // reopened roll keeps showing its links
   assert.deepEqual(r("completed", null, null), { kind: "create", syncedFolderId: null });
   assert.deepEqual(r("completed", null, "S"), { kind: "create", syncedFolderId: "S" }); // synced/imported: adopt
   assert.deepEqual(r("completed", "P", null), { kind: "linked", folderCreated: true, driveLinked: false, openFolderId: "P" });

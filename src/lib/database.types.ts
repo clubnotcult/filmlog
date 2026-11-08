@@ -10,6 +10,7 @@
  */
 
 import type { FilmFormat, FilmType } from "./film-classification";
+import type { ExposureControl } from "./camera-exposure";
 
 export type RollStatus = "active" | "completed" | "archived";
 export type Selection = "heart" | "star";
@@ -48,6 +49,8 @@ export type Database = {
           notes: string | null;
           active: boolean;
           default_meter_type: MeterType | null;
+          /** Which exposure settings the photographer chooses; settings the camera chooses itself are not applicable. */
+          exposure_control: ExposureControl;
         } & Timestamps;
         Insert: {
           id?: string;
@@ -58,6 +61,7 @@ export type Database = {
           notes?: string | null;
           active?: boolean;
           default_meter_type?: MeterType | null;
+          exposure_control?: ExposureControl;
           created_at?: string;
           updated_at?: string;
         };
@@ -70,6 +74,7 @@ export type Database = {
           notes?: string | null;
           active?: boolean;
           default_meter_type?: MeterType | null;
+          exposure_control?: ExposureControl;
           created_at?: string;
           updated_at?: string;
         };
@@ -125,6 +130,8 @@ export type Database = {
           format: FilmFormat | null;
           /** null = not classified yet (older stocks). */
           film_type: FilmType | null;
+          /** Structured film card design; null = no custom card. Parse with parseFilmCardDesign. */
+          card_design: unknown | null;
           active: boolean;
         } & Timestamps;
         Insert: {
@@ -134,6 +141,7 @@ export type Database = {
           iso?: number | null;
           format?: FilmFormat | null;
           film_type?: FilmType | null;
+          card_design?: unknown | null;
           active?: boolean;
           created_at?: string;
           updated_at?: string;
@@ -145,6 +153,7 @@ export type Database = {
           iso?: number | null;
           format?: FilmFormat | null;
           film_type?: FilmType | null;
+          card_design?: unknown | null;
           active?: boolean;
           created_at?: string;
           updated_at?: string;
@@ -195,9 +204,13 @@ export type Database = {
           id: string;
           user_id: string;
           film_stock_id: string;
-          film_inventory_item_id: string;
+          /** Null when the roll was created without consuming inventory (e.g. an archive import). */
+          film_inventory_item_id: string | null;
           camera_id: string;
-          default_lens_id: string;
+          /** Optional. Null = lens unknown unless a frame names its own; never inferred. */
+          default_lens_id: string | null;
+          /** Roll-level default location; frames.location_id overrides it. */
+          location_id: string | null;
           start_date: string;
           end_date: string | null;
           custom_title: string | null;
@@ -215,9 +228,13 @@ export type Database = {
           id?: string;
           user_id?: string;
           film_stock_id: string;
-          film_inventory_item_id: string;
+          /** Null when the roll was created without consuming inventory (e.g. an archive import). */
+          film_inventory_item_id: string | null;
           camera_id: string;
-          default_lens_id: string;
+          /** Optional. Null = lens unknown unless a frame names its own; never inferred. */
+          default_lens_id: string | null;
+          /** Roll-level default location; frames.location_id overrides it. */
+          location_id: string | null;
           start_date: string;
           end_date?: string | null;
           custom_title?: string | null;
@@ -237,9 +254,10 @@ export type Database = {
           id?: string;
           user_id?: string;
           film_stock_id?: string;
-          film_inventory_item_id?: string;
+          film_inventory_item_id?: string | null;
           camera_id?: string;
-          default_lens_id?: string;
+          default_lens_id?: string | null;
+          location_id?: string | null;
           start_date?: string;
           end_date?: string | null;
           custom_title?: string | null;
@@ -448,6 +466,26 @@ export type Database = {
           },
         ];
       };
+      /** Global user tags on a roll. Never copied onto frames: a frame's effective tags are roll_tags ∪ frame_tags. */
+      roll_tags: {
+        Row: { roll_id: string; tag_id: string; user_id: string; created_at: string };
+        Insert: { roll_id: string; tag_id: string; user_id?: string; created_at?: string };
+        Update: { roll_id?: string; tag_id?: string; user_id?: string; created_at?: string };
+        Relationships: [
+          {
+            foreignKeyName: "roll_tags_roll_id_fkey";
+            columns: ["roll_id"];
+            referencedRelation: "rolls";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "roll_tags_tag_id_fkey";
+            columns: ["tag_id"];
+            referencedRelation: "tags";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       locations: {
         Row: {
           id: string;
@@ -489,12 +527,15 @@ export type Database = {
     Functions: {
       create_roll: {
         Args: {
-          p_film_inventory_item_id: string;
+          p_film_stock_id: string;
           p_camera_id: string;
-          p_default_lens_id: string;
           p_start_date: string;
+          p_film_inventory_item_id?: string | null;
+          p_default_lens_id?: string | null;
           p_custom_title?: string | null;
           p_notes?: string | null;
+          p_location_id?: string | null;
+          p_tag_names?: string[];
         };
         Returns: Database["public"]["Tables"]["rolls"]["Row"];
       };
@@ -534,7 +575,7 @@ export type Database = {
         Returns: Database["public"]["Tables"]["frames"]["Row"];
       };
       finish_roll: {
-        Args: { p_roll_id: string };
+        Args: { p_roll_id: string; p_end_date?: string | null };
         Returns: Database["public"]["Tables"]["rolls"]["Row"];
       };
       reopen_roll: {
@@ -582,14 +623,15 @@ export type Database = {
         Args: { p_roll_id: string; p_after_frame_number: number };
         Returns: Database["public"]["Tables"]["frames"]["Row"];
       };
-      import_roll_frames: {
+      import_roll_images: {
         Args: {
           p_roll_id: string;
           p_drive_folder_id: string;
           p_drive_folder_name: string | null;
+          /** Array of {drive_file_id, drive_filename, drive_thumbnail_url, drive_view_url}, in SmartConvert order. */
           p_files: unknown;
         };
-        Returns: Database["public"]["Tables"]["frames"]["Row"][];
+        Returns: { created: number; existing: number; missing: number };
       };
     };
     Enums: {
@@ -611,3 +653,4 @@ export type RollSyncHistory =
   Database["public"]["Tables"]["roll_sync_history"]["Row"];
 export type Tag = Database["public"]["Tables"]["tags"]["Row"];
 export type Location = Database["public"]["Tables"]["locations"]["Row"];
+export type RollTag = Database["public"]["Tables"]["roll_tags"]["Row"];

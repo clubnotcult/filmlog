@@ -1,12 +1,13 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Field, FormError, SubmitButton, inputClass } from "@/components/form-controls";
 import { ShutterSpeedField } from "@/components/gear/shutter-speed-field";
 import { formatShutterSpeeds } from "@/lib/gear-values";
 import { METER_TYPES } from "@/lib/database.types";
 import type { Camera } from "@/lib/database.types";
 import type { FormState } from "@/app/(app)/gear/actions";
+import { EXPOSURE_CONTROLS, shutterApplies, type ExposureControl } from "@/lib/camera-exposure";
 
 export function CameraForm({
   initial,
@@ -20,6 +21,9 @@ export function CameraForm({
   const [state, formAction] = useActionState<FormState, FormData>(action, {
     error: null,
   });
+  const [exposureControl, setExposureControl] = useState<ExposureControl>(
+    initial?.exposure_control ?? "manual",
+  );
 
   return (
     <form action={formAction} className="max-w-md space-y-4">
@@ -44,9 +48,33 @@ export function CameraForm({
         />
       </Field>
 
-      <ShutterSpeedField
-        initialValue={initial ? formatShutterSpeeds(initial.shutter_speeds) : ""}
-      />
+      <Field
+        label="Exposure control"
+        htmlFor="exposure_control"
+        hint={EXPOSURE_CONTROLS.find((c) => c.value === exposureControl)?.hint}
+      >
+        <select
+          id="exposure_control"
+          name="exposure_control"
+          value={exposureControl}
+          onChange={(e) => setExposureControl(e.target.value as ExposureControl)}
+          className={inputClass}
+        >
+          {EXPOSURE_CONTROLS.map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      {/* Hidden (not removed) when the camera sets its own shutter, so any
+          speeds already saved are kept rather than wiped. */}
+      <div className={shutterApplies(exposureControl) ? undefined : "hidden"}>
+        <ShutterSpeedField
+          initialValue={initial ? formatShutterSpeeds(initial.shutter_speeds) : ""}
+        />
+      </div>
 
       <Field
         label="Default meter type"

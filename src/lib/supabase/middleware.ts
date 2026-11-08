@@ -64,7 +64,7 @@ export async function updateSession(
 
   if (user && pathname === "/login") {
     const homeUrl = request.nextUrl.clone();
-    homeUrl.pathname = "/active-roll";
+    homeUrl.pathname = "/rolls";
     homeUrl.search = "";
     return NextResponse.redirect(homeUrl);
   }

@@ -5,6 +5,7 @@ import { Field, FormError, SubmitButton, inputClass } from "@/components/form-co
 import { METER_TYPES } from "@/lib/database.types";
 import type { Camera, Frame, Lens } from "@/lib/database.types";
 import type { FormState } from "@/app/(app)/rolls/[id]/frames/actions";
+import { apertureApplies, exposureControlLabel, shutterApplies } from "@/lib/camera-exposure";
 
 export function FrameEditForm({
   frame,
@@ -12,10 +13,13 @@ export function FrameEditForm({
   lenses,
   action,
   returnTo,
+  inheritedLensName = null,
 }: {
   frame: Frame;
   camera: Camera;
   lenses: Lens[];
+  /** The roll's default lens, used when this frame names none. */
+  inheritedLensName?: string | null;
   action: (prevState: FormState, formData: FormData) => Promise<FormState>;
   returnTo?: string;
 }) {
@@ -24,7 +28,11 @@ export function FrameEditForm({
   });
 
   const [metadataLogged, setMetadataLogged] = useState(frame.metadata_logged);
-  const [lensId, setLensId] = useState(frame.lens_id ?? lenses[0]?.id ?? "");
+  // "" = no lens on this frame: it inherits the roll's default (or stays
+  // unknown). Never pre-filled with an arbitrary lens.
+  const [lensId, setLensId] = useState(frame.lens_id ?? "");
+  const needShutter = shutterApplies(camera.exposure_control);
+  const needAperture = apertureApplies(camera.exposure_control);
   const [aperture, setAperture] = useState<string>(
     frame.aperture !== null ? String(frame.aperture) : "",
   );
@@ -58,76 +66,103 @@ export function FrameEditForm({
           className="h-4 w-4"
         />
         <label htmlFor="metadata_logged_toggle" className="text-sm text-foreground">
-          Exposure metadata logged
+          I know this frame&apos;s exposure settings
         </label>
       </div>
 
+      {/* Location is edited on the frame view; round-trip it so saving here never clears it. */}
+      <input type="hidden" name="location_id" value={frame.location_id ?? ""} />
+
+      <Field
+        label="Lens"
+        htmlFor="lens_id"
+        hint={
+          metadataLogged && needAperture
+            ? "Required to log an aperture"
+            : "Set only if this frame used a different lens than the roll"
+        }
+      >
+        <select
+          id="lens_id"
+          name="lens_id"
+          required={metadataLogged && needAperture}
+          value={lensId}
+          onChange={(e) => handleLensChange(e.target.value)}
+          className={inputClass}
+        >
+          <option value="">
+            {inheritedLensName ? `Inherit from roll — ${inheritedLensName}` : "Unknown (no roll default)"}
+          </option>
+          {lenses.map((lens) => (
+            <option key={lens.id} value={lens.id}>
+              {lens.name}
+            </option>
+          ))}
+        </select>
+      </Field>
+
       {metadataLogged ? (
         <>
-          <Field label="Shutter speed" htmlFor="shutter_speed">
-            <select
-              id="shutter_speed"
-              name="shutter_speed"
-              required
-              defaultValue={frame.shutter_speed ?? ""}
-              className={inputClass}
-            >
-              <option value="" disabled>
-                Select shutter speed
-              </option>
-              {camera.shutter_speeds.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </Field>
+          {!needShutter && !needAperture && (
+            <p className="border-l-2 border-border py-1 pl-4 text-sm text-muted-strong">
+              {camera.name} is {exposureControlLabel(camera.exposure_control).toLowerCase()} — shutter and
+              aperture are set by the camera and not logged.
+            </p>
+          )}
 
-          <Field
-            label="Aperture"
-            htmlFor="aperture"
-            hint={
-              apertureOptions.length === 0
-                ? "Selected lens has no aperture stops configured"
-                : undefined
-            }
-          >
-            <select
-              id="aperture"
-              name="aperture"
-              required
-              value={aperture}
-              onChange={(e) => setAperture(e.target.value)}
-              disabled={apertureOptions.length === 0}
-              className={inputClass}
-            >
-              <option value="" disabled>
-                Select aperture
-              </option>
-              {apertureOptions.map((a) => (
-                <option key={a} value={a}>
-                  f/{a}
+          {needShutter && (
+            <Field label="Shutter speed" htmlFor="shutter_speed">
+              <select
+                id="shutter_speed"
+                name="shutter_speed"
+                required
+                defaultValue={frame.shutter_speed ?? ""}
+                className={inputClass}
+              >
+                <option value="" disabled>
+                  Select shutter speed
                 </option>
-              ))}
-            </select>
-          </Field>
+                {camera.shutter_speeds.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
 
-          <Field label="Lens" htmlFor="lens_id">
-            <select
-              id="lens_id"
-              name="lens_id"
-              required
-              value={lensId}
-              onChange={(e) => handleLensChange(e.target.value)}
-              className={inputClass}
+          {needAperture && (
+            <Field
+              label="Aperture"
+              htmlFor="aperture"
+              hint={
+                !selectedLens
+                  ? "Choose a lens first"
+                  : apertureOptions.length === 0
+                    ? "Selected lens has no aperture stops configured"
+                    : undefined
+              }
             >
-              {lenses.map((lens) => (
-                <option key={lens.id} value={lens.id}>
-                  {lens.name}
+              <select
+                id="aperture"
+                name="aperture"
+                required
+                value={aperture}
+                onChange={(e) => setAperture(e.target.value)}
+                disabled={apertureOptions.length === 0}
+                className={inputClass}
+              >
+                <option value="" disabled>
+                  Select aperture
                 </option>
-              ))}
-            </select>
-          </Field>
+                {apertureOptions.map((a) => (
+                  <option key={a} value={a}>
+                    f/{a}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
 
           {/* Push/pull is no longer an active field (removed from the
               workflow), but this hidden input round-trips whatever value a
@@ -153,7 +188,8 @@ export function FrameEditForm({
         </>
       ) : (
         <p className="border-l-2 border-border py-1 pl-4 text-sm text-muted-strong">
-          This frame will be saved with exposure metadata marked unknown.
+          No exposure logged — shutter, aperture and meter stay unknown. Turn this on only to record
+          settings you actually know.
         </p>
       )}
 
