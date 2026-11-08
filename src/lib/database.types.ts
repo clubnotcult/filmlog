@@ -51,6 +51,8 @@ export type Database = {
           default_meter_type: MeterType | null;
           /** Which exposure settings the photographer chooses; settings the camera chooses itself are not applicable. */
           exposure_control: ExposureControl;
+          /** Short user-chosen label, e.g. "F-1"; null when none set. */
+          abbreviation: string | null;
         } & Timestamps;
         Insert: {
           id?: string;
@@ -62,6 +64,7 @@ export type Database = {
           active?: boolean;
           default_meter_type?: MeterType | null;
           exposure_control?: ExposureControl;
+          abbreviation?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -75,6 +78,7 @@ export type Database = {
           active?: boolean;
           default_meter_type?: MeterType | null;
           exposure_control?: ExposureControl;
+          abbreviation?: string | null;
           created_at?: string;
           updated_at?: string;
         };

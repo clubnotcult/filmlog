@@ -63,6 +63,11 @@ export default async function GearPage() {
                     <span className="font-medium text-foreground">
                       {camera.name}
                     </span>
+                    {camera.abbreviation && (
+                      <span className="numeral border border-border px-1.5 py-0.5 text-[10px] leading-none text-muted-strong">
+                        {camera.abbreviation}
+                      </span>
+                    )}
                     {camera.format && (
                       <span className="text-xs text-muted">{camera.format}</span>
                     )}

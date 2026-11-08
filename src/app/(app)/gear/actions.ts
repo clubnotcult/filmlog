@@ -35,6 +35,17 @@ function exposureControlFrom(formData: FormData): ExposureControl {
   return isExposureControl(value) ? value : "manual";
 }
 
+const MAX_CAMERA_ABBREVIATION = 12;
+
+/** The optional abbreviation, trimmed; empty = none. Never derived from the name. */
+function abbreviationFrom(formData: FormData): { value: string | null } | { error: string } {
+  const value = optStr(formData, "abbreviation");
+  if (value && value.length > MAX_CAMERA_ABBREVIATION) {
+    return { error: `Abbreviation can be at most ${MAX_CAMERA_ABBREVIATION} characters.` };
+  }
+  return { value };
+}
+
 export async function createCamera(
   _prevState: FormState,
   formData: FormData,
@@ -45,6 +56,8 @@ export async function createCamera(
   const exposureControl = exposureControlFrom(formData);
 
   if (!name) return { error: "Name is required." };
+  const abbreviation = abbreviationFrom(formData);
+  if ("error" in abbreviation) return { error: abbreviation.error };
   // A camera that picks its own shutter speed (automatic, aperture priority)
   // has no dial to describe, so none is required.
   if (shutterApplies(exposureControl) && shutterSpeeds.length === 0) {
@@ -59,6 +72,7 @@ export async function createCamera(
     shutter_speeds: shutterSpeeds,
     default_meter_type: optMeterType(formData, "default_meter_type"),
     exposure_control: exposureControl,
+    abbreviation: abbreviation.value,
   });
 
   if (error) return { error: friendlyDbError(error) };
@@ -78,6 +92,8 @@ export async function updateCamera(
   const exposureControl = exposureControlFrom(formData);
 
   if (!name) return { error: "Name is required." };
+  const abbreviation = abbreviationFrom(formData);
+  if ("error" in abbreviation) return { error: abbreviation.error };
   // A camera that picks its own shutter speed (automatic, aperture priority)
   // has no dial to describe, so none is required.
   if (shutterApplies(exposureControl) && shutterSpeeds.length === 0) {
@@ -94,6 +110,7 @@ export async function updateCamera(
       shutter_speeds: shutterSpeeds,
       default_meter_type: optMeterType(formData, "default_meter_type"),
       exposure_control: exposureControl,
+      abbreviation: abbreviation.value,
     })
     .eq("id", id);
 
