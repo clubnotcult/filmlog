@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { parseExploreFilters, hasAnyFilter, searchFrames, EXPLORE_PAGE_SIZE } from "@/lib/explore/search";
 import { contextToQueryString } from "@/lib/frame-nav";
 import { ExploreFilterBar } from "@/components/explore/filter-bar";
+import { parseFilmCardDesign } from "@/lib/film-card";
+import { generateRollTitle } from "@/lib/roll-title";
 import { ExploreResultCard } from "@/components/explore/result-card";
 import { LibraryTabs } from "@/components/library-tabs";
 import { ImageRefreshControl } from "@/components/roll-lifecycle/image-refresh-control";
@@ -18,8 +20,10 @@ export default async function ExplorePage({
 
   const [{ data: filmStocks }, { data: cameras }, { data: lenses }, { data: rollDates }, { data: tags }, { data: locations }] =
     await Promise.all([
-      supabase.from("film_stocks").select("id, name").order("name", { ascending: true }),
-      supabase.from("cameras").select("id, name").order("name", { ascending: true }),
+      // card_design and abbreviation ride along on the filter lists already
+      // loaded here, so the gallery's dot and camera label cost no extra query.
+      supabase.from("film_stocks").select("id, name, card_design").order("name", { ascending: true }),
+      supabase.from("cameras").select("id, name, abbreviation").order("name", { ascending: true }),
       supabase
         .from("lenses")
         .select("id, name, focal_length, aperture_stops")
@@ -57,28 +61,35 @@ export default async function ExplorePage({
 
   const { frames, totalCount } = await searchFrames(supabase, filters);
 
-  // Display context for the current page of results only (roll/film
-  // stock/camera/lens names) — fetched for just what's on screen, not the
-  // whole matching set, so a large result count stays cheap to render.
+  // Display context for the current page of results only (roll title, film
+  // stock, camera) — one query for just the rolls on screen, not the whole
+  // matching set, so a large result count stays cheap to render.
   const rollIds = Array.from(new Set(frames.map((f) => f.roll_id)));
-  const lensIds = Array.from(
-    new Set(frames.map((f) => f.lens_id).filter((v): v is string => Boolean(v))),
-  );
-  const [{ data: resultRolls }, { data: resultLenses }] = await Promise.all([
+  const { data: resultRolls } =
     rollIds.length > 0
-      ? supabase.from("rolls").select("id, film_stock_id, camera_id, drive_folder_id").in("id", rollIds)
-      : Promise.resolve({
-          data: [] as { id: string; film_stock_id: string; camera_id: string; drive_folder_id: string | null }[],
-        }),
-    lensIds.length > 0
-      ? supabase.from("lenses").select("id, name").in("id", lensIds)
-      : Promise.resolve({ data: [] as { id: string; name: string }[] }),
-  ]);
+      ? await supabase
+          .from("rolls")
+          .select("id, film_stock_id, camera_id, drive_folder_id, start_date, end_date, custom_title")
+          .in("id", rollIds)
+      : { data: [] };
 
-  const filmStockNameById = new Map((filmStocks ?? []).map((f) => [f.id, f.name]));
-  const cameraNameById = new Map((cameras ?? []).map((c) => [c.id, c.name]));
-  const lensNameById = new Map((resultLenses ?? []).map((l) => [l.id, l.name]));
+  // Parsed once per stock (many results share one), never per thumbnail.
+  const filmStockById = new Map(
+    (filmStocks ?? []).map((f) => [f.id, { name: f.name, design: parseFilmCardDesign(f.card_design) }]),
+  );
+  const cameraAbbreviationById = new Map((cameras ?? []).map((c) => [c.id, c.abbreviation?.trim() || null]));
   const rollById = new Map((resultRolls ?? []).map((r) => [r.id, r]));
+  const rollTitleById = new Map(
+    (resultRolls ?? []).map((r) => [
+      r.id,
+      generateRollTitle({
+        startDate: r.start_date,
+        endDate: r.end_date,
+        filmStockName: filmStockById.get(r.film_stock_id)?.name ?? "Unknown film",
+        customTitle: r.custom_title,
+      }),
+    ]),
+  );
 
   // One silent refresh attempt per distinct roll among this page's results
   // (not per frame) — a single Drive API call per folder covers every
@@ -162,9 +173,9 @@ export default async function ExplorePage({
                     key={frame.id}
                     frame={frame}
                     href={`/rolls/${frame.roll_id}/frames/${frame.id}${contextToQueryString({ kind: "explore", filters })}`}
-                    filmStockName={roll ? (filmStockNameById.get(roll.film_stock_id) ?? null) : null}
-                    cameraName={roll ? (cameraNameById.get(roll.camera_id) ?? null) : null}
-                    lensName={frame.lens_id ? (lensNameById.get(frame.lens_id) ?? null) : null}
+                    roll={roll ? { id: roll.id, title: rollTitleById.get(roll.id) ?? "" } : null}
+                    filmStock={roll ? (filmStockById.get(roll.film_stock_id) ?? null) : null}
+                    cameraAbbreviation={roll ? (cameraAbbreviationById.get(roll.camera_id) ?? null) : null}
                   />
                 );
               })}

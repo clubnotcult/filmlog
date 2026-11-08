@@ -38,6 +38,22 @@ export function CameraForm({
         />
       </Field>
 
+      <Field
+        label="Abbreviation"
+        htmlFor="abbreviation"
+        hint="Optional. Shown under each image in the gallery, e.g. F-1"
+      >
+        <input
+          id="abbreviation"
+          name="abbreviation"
+          defaultValue={initial?.abbreviation ?? ""}
+          maxLength={12}
+          autoComplete="off"
+          placeholder="A-1"
+          className={`${inputClass} font-mono`}
+        />
+      </Field>
+
       <Field label="Format" htmlFor="format" hint="Optional, e.g. 35mm">
         <input
           id="format"

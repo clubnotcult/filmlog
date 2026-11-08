@@ -104,3 +104,39 @@ export function FilmCard({
     </div>
   );
 }
+
+/**
+ * A film stock as a small text-free circle — a quick visual identifier, not
+ * a readable card. It paints the card's own saved background (the same
+ * bands or gradient, from cardBackground) clipped to a circle, and never any
+ * of its text. A stock without a design gets a neutral outlined dot, never
+ * an invented color. Decorative: callers say the stock's name in text or a
+ * label nearby, so it's hidden from assistive tech unless a `title` is given.
+ */
+export function FilmStockDot({
+  design,
+  name,
+  size = 12,
+}: {
+  design: FilmCardDesign | null;
+  name?: string | null;
+  size?: number;
+}) {
+  const style: CSSProperties = { width: size, height: size };
+  if (design) {
+    style.background = cardBackground(design);
+    // A hairline so a very light or very dark design still reads as a circle on either theme.
+    style.boxShadow = "inset 0 0 0 1px rgb(127 127 127 / 0.35)";
+  }
+  return (
+    <span
+      aria-hidden={name ? undefined : true}
+      role={name ? "img" : undefined}
+      aria-label={name ? `${name} film` : undefined}
+      title={name ?? undefined}
+      data-film-dot=""
+      className={`inline-block shrink-0 rounded-full ${design ? "" : "border border-border bg-surface"}`}
+      style={style}
+    />
+  );
+}

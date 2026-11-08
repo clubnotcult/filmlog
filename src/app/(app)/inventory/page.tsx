@@ -97,7 +97,14 @@ export default async function InventoryPage({
               {inStockGroups.map((group) => (
                 <li key={group.stock?.id ?? "unknown"} className="border-b border-border">
                   <details className="group">
-                    <summary className="flex cursor-pointer list-none items-center justify-between gap-4 py-4 marker:content-none">
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-4 py-3 marker:content-none">
+                      <span className="flex min-w-0 items-center gap-3">
+                      <FilmCard
+                        design={parseFilmCardDesign(group.stock?.card_design)}
+                        iso={group.stock?.iso ?? null}
+                        name={group.stock?.name ?? "Unknown film stock"}
+                        size="sm"
+                      />
                       <span className="min-w-0 truncate text-base text-foreground">
                         {group.stock?.name ?? "Unknown film stock"}
                         {group.stock?.iso && (
@@ -110,6 +117,7 @@ export default async function InventoryPage({
                             {filmTypeLabel(group.stock?.film_type)}
                           </span>
                         )}
+                      </span>
                       </span>
                       <span className="numeral shrink-0 text-3xl font-light leading-none text-foreground">
                         {group.total}
