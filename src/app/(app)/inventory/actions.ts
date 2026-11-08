@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { parseFilmCardDesign, type FilmCardDesign } from "@/lib/film-card";
+import { parseFilmCardDesign, serializeFilmCardDesign } from "@/lib/film-card";
 import { friendlyDbError } from "@/lib/db-errors";
 import { isFilmFormat, isFilmType, type FilmFormat, type FilmType } from "@/lib/film-classification";
 import type { RowActionState } from "@/components/row-actions";
@@ -42,8 +42,9 @@ function readClassification(
  * The submitted film card, validated into the stored structure. An empty or
  * colorless value means "no custom card" (null), never a generated one.
  */
-function readCardDesign(formData: FormData): FilmCardDesign | null {
-  return parseFilmCardDesign(str(formData, "card_design"));
+function readCardDesign(formData: FormData): Record<string, unknown> | null {
+  const design = parseFilmCardDesign(str(formData, "card_design"));
+  return design ? serializeFilmCardDesign(design) : null;
 }
 
 export async function createFilmStock(

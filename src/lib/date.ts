@@ -23,6 +23,29 @@ export function formatLongDate(isoDate: string): string {
   });
 }
 
+/**
+ * A roll's date range, short form: "11.6–11.8", or just "11.6" when the roll
+ * started and ended on the same calendar day (or has no end date yet).
+ * Compares the stored "YYYY-MM-DD" strings, so it's display-only and never
+ * shifted by a timezone.
+ */
+export function formatShortDateRange(startDate: string, endDate: string | null): string {
+  const start = formatShortDate(startDate);
+  if (!endDate || endDate === startDate) return start;
+  return `${start}–${formatShortDate(endDate)}`;
+}
+
+/**
+ * Long form for detail views: "Nov 6, 2026 – Nov 8, 2026", or "Nov 6, 2026"
+ * when start and end are the same day. Returns only the start when there is
+ * no end date; callers decide how to show an open roll.
+ */
+export function formatLongDateRange(startDate: string, endDate: string | null): string {
+  const start = formatLongDate(startDate);
+  if (!endDate || endDate === startDate) return start;
+  return `${start} – ${formatLongDate(endDate)}`;
+}
+
 /** Today as "YYYY-MM-DD" in the browser's local timezone, for date inputs. */
 export function todayIsoDate(): string {
   const now = new Date();

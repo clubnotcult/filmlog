@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { generateRollTitle } from "@/lib/roll-title";
-import { formatLongDate } from "@/lib/date";
+import { formatLongDate, formatLongDateRange } from "@/lib/date";
 import { computeSyncStatus, syncStatusLabel, syncStatusColorClass } from "@/lib/sync-status";
 import { ReopenRollButton } from "@/components/active-roll/reopen-roll-button";
 import { ArchiveRollButton, RestoreRollButton } from "@/components/roll-lifecycle/archive-restore-buttons";
@@ -165,7 +165,13 @@ export default async function RollDetailPage({
             </span>
           </div>
           <p className="mt-1 text-sm text-muted-strong">
-            {formatLongDate(roll.start_date)} – {roll.end_date ? formatLongDate(roll.end_date) : <span className="text-muted">open</span>}
+            {roll.end_date ? (
+              formatLongDateRange(roll.start_date, roll.end_date)
+            ) : (
+              <>
+                {formatLongDate(roll.start_date)} – <span className="text-muted">open</span>
+              </>
+            )}
           </p>
           <p className="mt-0.5 text-xs text-muted">
             {[

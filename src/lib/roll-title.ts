@@ -1,9 +1,10 @@
-import { formatShortDate } from "@/lib/date";
+import { formatShortDateRange } from "@/lib/date";
 
 /**
  * Generates the displayed roll title from structured fields (spec §6).
  *
- * Format: `START DATE[–END DATE] · FILM STOCK[ · CUSTOM TITLE]`
+ * Format: `START DATE[–END DATE] · FILM STOCK[ · CUSTOM TITLE]` — a roll that
+ * started and finished on the same day shows its date once ("11.6").
  *
  * The generated string is a *display* value only — start_date, end_date,
  * film_stock and custom_title remain the structured source of truth in the
@@ -17,9 +18,7 @@ export function generateRollTitle(params: {
 }): string {
   const { startDate, endDate, filmStockName, customTitle } = params;
 
-  const dateRange = endDate
-    ? `${formatShortDate(startDate)}–${formatShortDate(endDate)}`
-    : formatShortDate(startDate);
+  const dateRange = formatShortDateRange(startDate, endDate);
 
   const parts = [dateRange, filmStockName];
   if (customTitle && customTitle.trim().length > 0) {
